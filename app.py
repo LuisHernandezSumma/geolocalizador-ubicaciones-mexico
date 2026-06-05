@@ -68,15 +68,24 @@ uploaded = st.file_uploader(
 )
 
 if uploaded:
-    # Detect header row (first row with >2 non-empty named columns)
-    raw = pd.read_excel(uploaded, header=None)
+    # Detect header row using openpyxl directly (more reliable with uploaded files)
+    import io
+    from openpyxl import load_workbook
+    file_bytes = uploaded.read()
+    wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
     header_row = 0
-    for i in range(min(10, len(raw))):
-        vals = [str(v).strip() for v in raw.iloc[i] if str(v).strip() and not str(v).startswith('Unnamed')]
-        if len(vals) > 2:
+    for i, row in enumerate(ws.iter_rows(max_row=10, values_only=True)):
+        str_vals = [str(v).strip() for v in row
+                    if v is not None and str(v).strip() not in ('', 'None', 'nan')
+                    and not str(v).replace('.','').replace('-','').strip().isnumeric()]
+        if len(str_vals) > 2:
             header_row = i
             break
-    df = pd.read_excel(uploaded, header=header_row)
+    uploaded.seek(0)
+    df = pd.read_excel(io.BytesIO(file_bytes), header=header_row)
+    df = df.dropna(axis=1, how='all')
+    df.columns = [str(c).strip() for c in df.columns]
     st.success(f"✅ Archivo cargado: **{uploaded.name}** — {len(df):,} filas, {len(df.columns)} columnas")
 
     # ── Mapeo de columnas ─────────────────────────────────────────────────────
