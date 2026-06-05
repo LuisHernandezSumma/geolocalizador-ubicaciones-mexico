@@ -68,7 +68,15 @@ uploaded = st.file_uploader(
 )
 
 if uploaded:
-    df = pd.read_excel(uploaded)
+    # Detect header row (first row with >2 non-empty named columns)
+    raw = pd.read_excel(uploaded, header=None)
+    header_row = 0
+    for i in range(min(10, len(raw))):
+        vals = [str(v).strip() for v in raw.iloc[i] if str(v).strip() and not str(v).startswith('Unnamed')]
+        if len(vals) > 2:
+            header_row = i
+            break
+    df = pd.read_excel(uploaded, header=header_row)
     st.success(f"✅ Archivo cargado: **{uploaded.name}** — {len(df):,} filas, {len(df.columns)} columnas")
 
     # ── Mapeo de columnas ─────────────────────────────────────────────────────
@@ -78,9 +86,9 @@ if uploaded:
             'lat':    ('📍 Latitud existente',    ['latitud','latitude','lat']),
             'lng':    ('📍 Longitud existente',   ['longitud','longitude','lon','lng']),
             'est':    ('🗺️ Estado',               ['estado','state','entidad']),
-            'mun':    ('🏙️ Ciudad/Municipio',     ['municipio','ciudad','city']),
-            'cp':     ('📮 CP',                   ['cp','c.p.','codigo postal','postal','zip']),
-            'nom':    ('🏢 Nombre/Sucursal',      ['nombre','sucursal','unidad','tienda','locacion']),
+            'mun':    ('🏙️ Ciudad/Municipio',     ['municipio','ciudad','city','ciudad juarez','locacion','locación']),
+            'cp':     ('📮 CP',                   ['cp','c.p.','c.p','codigo postal','postal','zip','cod postal']),
+            'nom':    ('🏢 Nombre/Sucursal',      ['nombre','nombre del inmueble','sucursal','unidad','tienda']),
             'dir':    ('📌 Dirección',             ['direccion','dirección','domicilio','address']),
         }
 
