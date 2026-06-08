@@ -55,10 +55,20 @@ div[data-baseweb="tab-highlight"] {{ background-color: {SUMMA_AZUL}; }}
     padding: 2px 10px; border-radius: 6px;
     font-weight: 600 !important; color: {SUMMA_AZUL} !important;
 }}
-/* Combos del mapeo con fondo gris suave */
+/* Combos del mapeo: color segun deteccion via wrapper */
+/* Por defecto (otros combos de la app) gris suave */
 div[data-baseweb="select"] > div {{
     background-color: {SUMMA_GRIS_COMBO} !important;
     border-color: #B8BFC4 !important;
+}}
+/* Marcadores ocultos */
+.mk-ok, .mk-no {{ display: none; }}
+/* El contenedor que CONTIENE el marcador .mk-ok, su siguiente hermano (el combo) -> verde */
+div[data-testid="stElementContainer"]:has(.mk-ok) + div[data-testid="stElementContainer"] div[data-baseweb="select"] > div {{
+    background-color: #D7EFDD !important; border-color: #7FBF95 !important;
+}}
+div[data-testid="stElementContainer"]:has(.mk-no) + div[data-testid="stElementContainer"] div[data-baseweb="select"] > div {{
+    background-color: #FFFFFF !important; border-color: #D0D0D0 !important;
 }}
 /* Etiquetas: negrita, el color de fondo se asigna por campo segun deteccion */
 .stTextInput label, .stSlider label {{
@@ -171,11 +181,17 @@ if uploaded:
         for i, (fid, (label, kws)) in enumerate(CAMPOS.items()):
             detected = autodetect(kws)
             default_idx = cols.index(detected) if detected and detected in cols else 0
-            # Indicador de estado en la etiqueta: verde si detectado, neutro si no
-            estado_ico = "\U0001F7E2" if detected else "\u26AA"  # circulo verde / circulo blanco
+            key = f"map_{fid}"
+            # Estado actual del combo (refleja seleccion manual en vivo, no solo el auto-detect)
+            current = st.session_state.get(key, detected if detected else "- no usar -")
+            asignado = bool(current and current != "- no usar -")
+            estado_ico = "\U0001F7E2" if asignado else "\u26AA"
             label_estado = f"{estado_ico} {label}"
+            mk = "mk-ok" if asignado else "mk-no"
             with (col1 if i % 2 == 0 else col2):
-                sel = st.selectbox(label_estado, cols, index=default_idx, key=f"map_{fid}")
+                # Marcador antes del combo; el CSS :has() colorea el combo hermano
+                st.markdown(f'<span class="{mk}"></span>', unsafe_allow_html=True)
+                sel = st.selectbox(label_estado, cols, index=default_idx, key=key)
                 mapping[fid] = sel if sel != "- no usar -" else None
 
     # Valores por defecto cuando Negocio/Moneda no vienen en columna
