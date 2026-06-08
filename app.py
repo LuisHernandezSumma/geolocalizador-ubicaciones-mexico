@@ -8,10 +8,18 @@ from pathlib import Path
 from utils.geocoder import geocode_row, enrich_zones, build_kml
 from utils.data_loader import load_cp_lookup, load_kml_zones
 
-# Colores institucionales SUMMA
-SUMMA_AZUL = "#0036A1"
-SUMMA_AZUL_CLARO = "#E8EEF8"
-SUMMA_GRIS = "#6B7280"
+# Paleta institucional SUMMA (extraida del tablero Power BI)
+SUMMA_AZUL = "#003EA5"        # azul fuerte - headers, botones
+SUMMA_AZUL_MEDIO = "#688BC6"  # azul medio - acentos
+SUMMA_LAVANDA = "#ADBCDD"     # lavanda azul - barras secundarias
+SUMMA_VERDE = "#C9E7DD"       # verde menta - seccion valores
+SUMMA_ROSA = "#F2DBED"        # rosa claro - seccion alterna
+SUMMA_GRIS = "#6B7280"        # texto gris
+SUMMA_GRIS_CLARO = "#ECECEC"  # fondos
+SUMMA_AZUL_CLARO = "#EaEFF7"  # fondo suave
+# Secuencia de colores para graficas multi-categoria
+SUMMA_PALETA = ["#003EA5", "#688BC6", "#ADBCDD", "#C9E7DD", "#9BC4B5",
+                "#F2DBED", "#D4A5C9", "#86A1CE", "#5B7BB4", "#B8C8E0"]
 
 st.set_page_config(page_title="Geolocalizador SUMMA", page_icon=":world_map:", layout="wide")
 
@@ -19,11 +27,27 @@ st.markdown(f"""
 <style>
 .main-title {{ font-size: 1.9rem; font-weight: 700; color: {SUMMA_AZUL}; margin-bottom: 0; }}
 .sub-title  {{ font-size: 0.95rem; color: {SUMMA_GRIS}; margin-bottom: 1.2rem; }}
-.stButton>button[kind="primary"], .stDownloadButton>button {{ background-color: {SUMMA_AZUL}; border-color: {SUMMA_AZUL}; }}
+/* Botones: fondo azul, TEXTO BLANCO forzado */
+.stButton>button[kind="primary"], .stDownloadButton>button {{
+    background-color: {SUMMA_AZUL} !important;
+    border-color: {SUMMA_AZUL} !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}}
+.stButton>button[kind="primary"] *, .stDownloadButton>button * {{ color: #FFFFFF !important; }}
+.stButton>button[kind="primary"]:hover, .stDownloadButton>button:hover {{
+    background-color: {SUMMA_AZUL_MEDIO} !important;
+    border-color: {SUMMA_AZUL_MEDIO} !important;
+    color: #FFFFFF !important;
+}}
 .stProgress > div > div > div > div {{ background-color: {SUMMA_AZUL}; }}
-div[data-baseweb="tab-list"] button[aria-selected="true"] {{ color: {SUMMA_AZUL}; }}
+div[data-baseweb="tab-list"] button[aria-selected="true"] {{ color: {SUMMA_AZUL}; font-weight: 600; }}
 div[data-baseweb="tab-highlight"] {{ background-color: {SUMMA_AZUL}; }}
-.summa-header {{ display:flex; align-items:center; gap:16px; margin-bottom:0.4rem; }}
+.summa-header {{ display:flex; align-items:center; gap:16px; margin-bottom:0.4rem;
+                 border-bottom: 3px solid {SUMMA_AZUL}; padding-bottom: 10px; }}
+[data-testid="stMetric"] {{ background: {SUMMA_AZUL_CLARO}; border-radius: 8px;
+    padding: 10px 14px; border-left: 4px solid {SUMMA_AZUL}; }}
+[data-testid="stMetricValue"] {{ color: {SUMMA_AZUL}; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -34,19 +58,17 @@ def get_logo_b64():
     return None
 
 logo = get_logo_b64()
-if logo:
-    st.markdown(f"""
-    <div class="summa-header">
-      <img src="data:image/png;base64,{logo}" style="height:70px"/>
-      <div>
-        <div class="main-title">Geolocalizador de Ubicaciones Mexico</div>
-        <div class="sub-title">Coordenadas, zonas sismicas, cresta e hidrometeorologicas - Intermediario de Reaseguro</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown('<div class="main-title">Geolocalizador de Ubicaciones Mexico</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">Coordenadas, zonas sismicas, cresta e hidrometeorologicas</div>', unsafe_allow_html=True)
+logo_img = f'<img src="data:image/png;base64,{logo}" style="height:56px;background:white;border-radius:8px;padding:4px"/>' if logo else ''
+st.markdown(f"""
+<div style="background:{SUMMA_AZUL};border-radius:10px;padding:16px 24px;margin-bottom:18px;
+            display:flex;align-items:center;gap:18px">
+  {logo_img}
+  <div>
+    <div style="font-size:1.7rem;font-weight:700;color:#fff;line-height:1.1">Geolocalizador de Ubicaciones Mexico</div>
+    <div style="font-size:0.9rem;color:#C7D4E4">Coordenadas, zonas sismicas, cresta e hidrometeorologicas &middot; Intermediario de Reaseguro</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 @st.cache_resource(show_spinner="Cargando datos de referencia...")
 def get_reference_data():
@@ -97,18 +119,18 @@ if uploaded:
     with st.expander("Mapeo de columnas", expanded=True):
         cols = ["- no usar -"] + list(df.columns)
         CAMPOS = {
-            'lat': ('Latitud existente',  ['latitud', 'latitude', 'lat']),
-            'lng': ('Longitud existente', ['longitud', 'longitude', 'lon', 'lng']),
-            'est': ('Estado',             ['estado', 'state', 'entidad']),
-            'mun': ('Ciudad/Municipio',   ['municipio', 'ciudad', 'city', 'poblacion', 'poblacion', 'ciudad juarez', 'locacion', 'locacion']),
-            'cp':  ('CP',                 ['cp', 'c.p.', 'c.p', 'codigo postal', 'codigo postal', 'postal', 'zip', 'cod postal']),
-            'nom': ('Nombre/Sucursal/Edificio', ['nombre del puente', 'nombre del inmueble', 'nombre', 'sucursal', 'tienda', 'unidad']),
-            'dir': ('Direccion',          ['direccion', 'direccion', 'domicilio', 'address', 'ubicacion', 'ubicacion']),
-            'neg': ('Negocio',            ['negocio', 'grupo', 'asegurado', 'cliente', 'ramo', 'dependencia']),
-            'mon': ('Moneda',             ['moneda', 'divisa', 'currency']),
-            'vinm':('Valor Inmueble',     ['valor inmueble', 'valor inm', 'inmueble', 'edificio', 'edificios', 'valor edificio', 'suma asegurada edificio']),
-            'vcon':('Valor Contenidos',   ['valor contenidos', 'valor con', 'contenidos', 'contenido', 'mobiliario', 'suma asegurada contenidos']),
-            'vtot':('Valor Total',        ['valor total', 'valor', 'tiv', 'tivs', 'suma asegurada', 'suma asegurada total', 'total asegurado']),
+            'lat': ('📍 Latitud existente',  ['latitud', 'latitude', 'lat']),
+            'lng': ('📍 Longitud existente', ['longitud', 'longitude', 'lon', 'lng']),
+            'est': ('🗺️ Estado',       ['estado', 'state', 'entidad']),
+            'mun': ('🏙️ Ciudad/Municipio', ['municipio', 'ciudad', 'city', 'poblacion', 'poblacion', 'ciudad juarez', 'locacion', 'locacion']),
+            'cp':  ('📮 CP',                 ['cp', 'c.p.', 'c.p', 'codigo postal', 'codigo postal', 'postal', 'zip', 'cod postal']),
+            'nom': ('🏢 Nombre/Sucursal/Edificio', ['nombre del puente', 'nombre del inmueble', 'nombre', 'sucursal', 'tienda', 'unidad']),
+            'dir': ('📌 Direccion',          ['direccion', 'direccion', 'domicilio', 'address', 'ubicacion', 'ubicacion']),
+            'neg': ('💼 Negocio',            ['negocio', 'grupo', 'asegurado', 'cliente', 'ramo', 'dependencia']),
+            'mon': ('💱 Moneda',             ['moneda', 'divisa', 'currency']),
+            'vinm':('🏛️ Valor Inmueble', ['valor inmueble', 'valor inm', 'inmueble', 'edificio', 'edificios', 'valor edificio', 'suma asegurada edificio']),
+            'vcon':('📦 Valor Contenidos',   ['valor contenidos', 'valor con', 'contenidos', 'contenido', 'mobiliario', 'suma asegurada contenidos']),
+            'vtot':('💰 Valor Total',        ['valor total', 'valor', 'tiv', 'tivs', 'suma asegurada', 'suma asegurada total', 'total asegurado']),
         }
 
         def _norm(c):
@@ -384,9 +406,11 @@ if 'results' in st.session_state:
             vc = d[col].value_counts().reset_index()
             vc.columns = [titulo, 'Ubicaciones']
             fig = px.bar(vc, x=titulo, y='Ubicaciones', text='Ubicaciones',
-                         color_discrete_sequence=[SUMMA_AZUL])
+                         color=titulo, color_discrete_sequence=SUMMA_PALETA)
             fig.update_traces(textposition='outside')
-            fig.update_layout(height=320, margin=dict(t=30, b=10, l=10, r=10), plot_bgcolor='white')
+            fig.update_layout(height=320, margin=dict(t=30, b=10, l=10, r=10),
+                              plot_bgcolor='white', showlegend=False,
+                              font=dict(color="#333"))
             st.plotly_chart(fig, use_container_width=True)
 
         g1, g2 = st.columns(2)
@@ -427,11 +451,13 @@ if 'results' in st.session_state:
                 g.columns = [titulo, 'Valor']
                 if horizontal:
                     fig = px.bar(g, y=titulo, x='Valor', orientation='h',
-                                 color_discrete_sequence=[SUMMA_AZUL])
+                                 color=titulo, color_discrete_sequence=SUMMA_PALETA)
                     fig.update_layout(yaxis={'categoryorder': 'total ascending'})
                 else:
-                    fig = px.bar(g, x=titulo, y='Valor', color_discrete_sequence=[SUMMA_AZUL])
-                fig.update_layout(height=340, margin=dict(t=30, b=10, l=10, r=10), plot_bgcolor='white')
+                    fig = px.bar(g, x=titulo, y='Valor',
+                                 color=titulo, color_discrete_sequence=SUMMA_PALETA)
+                fig.update_layout(height=340, margin=dict(t=30, b=10, l=10, r=10),
+                                  plot_bgcolor='white', showlegend=False, font=dict(color="#333"))
                 st.plotly_chart(fig, use_container_width=True)
 
             st.markdown("**Valor Total por Estado**")
