@@ -30,14 +30,17 @@ def clean_cp(raw) -> str:
 
 
 def extract_cp_from_text(text: str) -> str:
-    """Extrae un CP embebido dentro de una direccion.
-    Maneja: 'C.P. 01000', 'CP. 02870', 'C.P 14308', 'cp 45685'."""
-    t = str(text or '')
-    m = re.search(r'\b[Cc]\.?\s*[Pp]\.?\s*(\d{5})\b', t)
+    """Extrae un CP embebido dentro de una direccion, de forma CONSERVADORA.
+    Solo lo toma cuando hay marca explicita 'C.P.'/'CP', o cuando un numero
+    de 5 digitos esta al final del texto (patron tipico de domicilio).
+    Asi se evita confundir numeros de lote/manzana con un CP real."""
+    t = str(text or '').strip()
+    # 1) Marca explicita C.P. / CP / C.P : 14308
+    m = re.search(r'\b[Cc]\.?\s*[Pp]\.?\s*[:.]?\s*(\d{5})\b', t)
     if m:
         return m.group(1)
-    # fallback: cualquier secuencia aislada de 5 digitos
-    m = re.search(r'\b(\d{5})\b', t)
+    # 2) CP de 5 digitos SOLO si esta al final del texto (ultimos ~8 chars)
+    m = re.search(r'\b(\d{5})\b', t[-8:])
     if m:
         return m.group(1)
     return ''
@@ -174,11 +177,12 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
     nom_s = gv('nom')
     dir_s = gv('dir')
 
-    # CP: primero la columna propia; si no, se intenta extraer de la direccion
+    # CP: primero la columna propia; si no, se intenta extraer de la direccion.
+    # cp_propio = True cuando viene de una columna CP dedicada (confiable).
     cp_s = clean_cp(gv('cp'))
+    cp_propio = bool(cp_s)
     if not cp_s and dir_s:
         cp_s = extract_cp_from_text(dir_s)
-    # tambien intenta extraer del campo nombre/ubicacion si trae el CP ahi
     if not cp_s and nom_s:
         cp_s = extract_cp_from_text(nom_s)
 
@@ -236,19 +240,28 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
     if cp_s:
         entry = cp_lookup.get(cp_s)
         if entry:
-            result = {**base, **enrich_from_cp(cp_s), 'metodo': '2-CP+lookup'}
-            issues = []
+            conflicto_estado = False
             if est_s and entry.get('estado'):
                 if normalize(est_s) not in normalize(entry['estado']) and \
                    normalize(entry['estado']) not in normalize(est_s):
+                    conflicto_estado = True
+            # Si el CP fue EXTRAIDO de la direccion (no columna propia) y choca con
+            # el estado del archivo, probablemente no es un CP real -> se ignora y
+            # se continua con geocodificacion por direccion/ciudad+estado.
+            if conflicto_estado and not cp_propio:
+                cp_s = ''  # descartar y caer a pasos siguientes
+            else:
+                result = {**base, **enrich_from_cp(cp_s), 'metodo': '2-CP+lookup'}
+                issues = []
+                if conflicto_estado:
                     issues.append(f"Estado \"{est_s}\" != lookup \"{entry['estado']}\"")
-            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP lookup)'
-            if not result['zona_sismica'] and result['lat_geo']:
-                try:
-                    result.update(enrich_zones_from_coords(float(result['lat_geo']), float(result['lng_geo'])))
-                except Exception:
-                    pass
-            return result
+                result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP lookup)'
+                if not result['zona_sismica'] and result['lat_geo']:
+                    try:
+                        result.update(enrich_zones_from_coords(float(result['lat_geo']), float(result['lng_geo'])))
+                    except Exception:
+                        pass
+                return result
 
     # ── Step 3: Solo CP → Nominatim ──────────────────────────────────────────
     if cp_s:

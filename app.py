@@ -102,8 +102,13 @@ if uploaded:
             'est': ('Estado',             ['estado', 'state', 'entidad']),
             'mun': ('Ciudad/Municipio',   ['municipio', 'ciudad', 'city', 'poblacion', 'poblacion', 'ciudad juarez', 'locacion', 'locacion']),
             'cp':  ('CP',                 ['cp', 'c.p.', 'c.p', 'codigo postal', 'codigo postal', 'postal', 'zip', 'cod postal']),
-            'nom': ('Nombre/Sucursal',    ['nombre del puente', 'nombre del inmueble', 'nombre', 'sucursal', 'tienda', 'unidad', 'inmueble']),
+            'nom': ('Nombre/Sucursal/Edificio', ['nombre del puente', 'nombre del inmueble', 'nombre', 'sucursal', 'tienda', 'unidad']),
             'dir': ('Direccion',          ['direccion', 'direccion', 'domicilio', 'address', 'ubicacion', 'ubicacion']),
+            'neg': ('Negocio',            ['negocio', 'grupo', 'asegurado', 'cliente', 'ramo', 'dependencia']),
+            'mon': ('Moneda',             ['moneda', 'divisa', 'currency']),
+            'vinm':('Valor Inmueble',     ['valor inmueble', 'valor inm', 'inmueble', 'edificio', 'edificios', 'valor edificio', 'suma asegurada edificio']),
+            'vcon':('Valor Contenidos',   ['valor contenidos', 'valor con', 'contenidos', 'contenido', 'mobiliario', 'suma asegurada contenidos']),
+            'vtot':('Valor Total',        ['valor total', 'valor', 'tiv', 'tivs', 'suma asegurada', 'suma asegurada total', 'total asegurado']),
         }
 
         def _norm(c):
@@ -128,6 +133,12 @@ if uploaded:
             with (col1 if i % 2 == 0 else col2):
                 sel = st.selectbox(label, cols, index=default_idx, key=f"map_{fid}")
                 mapping[fid] = sel if sel != "- no usar -" else None
+
+    # Valores por defecto cuando Negocio/Moneda no vienen en columna
+    cfg1, cfg2 = st.columns(2)
+    negocio_default = cfg1.text_input("Negocio (si no viene en columna)", value="",
+                                      placeholder="Ej. CONAGUA")
+    moneda_default = cfg2.selectbox("Moneda por defecto", ["MXN", "USD", "EUR"], index=0)
 
     def gv(row, fid):
         col = mapping.get(fid)
@@ -171,6 +182,8 @@ if uploaded:
         st.session_state['results'] = results
         st.session_state['df_orig'] = df
         st.session_state['mapping'] = mapping
+        st.session_state['negocio_default'] = negocio_default
+        st.session_state['moneda_default'] = moneda_default
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total", len(df))
         c2.metric("OK", ok)
@@ -189,6 +202,47 @@ if 'results' in st.session_state:
 
     nom_col = mapping.get('nom')
     dir_col = mapping.get('dir')
+    negocio_default = st.session_state.get('negocio_default', '')
+    moneda_default = st.session_state.get('moneda_default', 'MXN')
+
+    def to_num(v):
+        """Convierte texto/numero a float; '' si no es numero."""
+        if v is None:
+            return None
+        s_ = str(v).strip().replace('$', '').replace(',', '').replace(' ', '')
+        if s_ in ('', 'nan', 'None'):
+            return None
+        try:
+            return float(s_)
+        except ValueError:
+            return None
+
+    def col_val(row, fid):
+        c = mapping.get(fid)
+        return row[c] if c and c in row and pd.notna(row[c]) else None
+
+    # Construir columnas de valores
+    v_inm, v_con, v_tot, v_neg, v_mon = [], [], [], [], []
+    for _, row in df_orig.iterrows():
+        inm = to_num(col_val(row, 'vinm'))
+        con = to_num(col_val(row, 'vcon'))
+        tot = to_num(col_val(row, 'vtot'))
+        # Valor Total: si viene, se usa; si no, suma inm+con (lo que exista)
+        if tot is None:
+            partes = [x for x in (inm, con) if x is not None]
+            tot = sum(partes) if partes else None
+        v_inm.append(inm if inm is not None else '')
+        v_con.append(con if con is not None else '')
+        v_tot.append(tot if tot is not None else '')
+        neg = col_val(row, 'neg')
+        v_neg.append(str(neg).strip() if neg is not None else negocio_default)
+        mon = col_val(row, 'mon')
+        v_mon.append(str(mon).strip() if mon is not None else moneda_default)
+    df_result['valor_inmueble'] = v_inm
+    df_result['valor_contenidos'] = v_con
+    df_result['valor_total'] = v_tot
+    df_result['negocio'] = v_neg
+    df_result['moneda'] = v_mon
 
     def row_search_blob(row):
         parts = [
@@ -201,7 +255,7 @@ if 'results' in st.session_state:
 
     df_result['_blob'] = df_result.apply(row_search_blob, axis=1)
 
-    tab1, tab2, tab3 = st.tabs(["Mapa", "Tabla de resultados", "Dashboard"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Mapa", "Tabla de resultados", "Dashboard zonas", "Dashboard valores"])
 
     with tab1:
         st.markdown("### Puntos geocodificados")
@@ -284,6 +338,31 @@ if 'results' in st.session_state:
             mime="application/vnd.google-earth.kml+xml", use_container_width=True)
         st.caption("El KML se colorea por Zona Sismica. Importalo en mymaps.google.com -> Crear mapa -> Importar.")
 
+        st.markdown("---")
+        st.markdown("**CSV para Power BI** (columnas genericas y limpias)")
+        # CSV generico: 14 columnas estandarizadas, una fila por punto
+        nom_c = mapping.get('nom')
+        csv_df = pd.DataFrame({
+            'Nombre':   df_result[nom_c].astype(str) if nom_c and nom_c in df_result else '',
+            'Negocio':  df_result['negocio'],
+            'Estado':   df_result['estado_geo'],
+            'Municipio':df_result['municipio_geo'],
+            'CP':       df_result['cp_geo'].astype(str),
+            'Lat':      df_result['lat_geo'],
+            'Lon':      df_result['lng_geo'],
+            'Valor_Inmueble':   df_result['valor_inmueble'],
+            'Valor_Contenidos': df_result['valor_contenidos'],
+            'Valor_Total':      df_result['valor_total'],
+            'Moneda':   df_result['moneda'],
+            'Zona_Sismica': df_result['zona_sismica'],
+            'Zona_Cresta':  df_result['zona_cresta'],
+            'Hidro2':       df_result['hidro2'],
+        })
+        csv_bytes = csv_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button("Descargar CSV para Power BI", csv_bytes,
+            file_name="datos_powerbi.csv", mime="text/csv", use_container_width=True)
+        st.caption("Sube este CSV a la carpeta que lee Power BI. Codificacion UTF-8 con BOM para acentos.")
+
     with tab3:
         st.markdown("### Resumen por zonas y estados")
         total = len(df_result)
@@ -320,3 +399,48 @@ if 'results' in st.session_state:
             st.markdown("**Por Hidro2**"); bar('hidro2', 'Hidro2')
         with g4:
             st.markdown("**Por Estado**"); bar('estado_geo', 'Estado')
+
+    # ════════════════════════════ TAB 4: DASHBOARD VALORES ═══════════════════
+    with tab4:
+        st.markdown("### Valor Total asegurado por zonas y estados")
+
+        dv = df_result.copy()
+        dv['vt'] = pd.to_numeric(dv['valor_total'], errors='coerce')
+        dv = dv.dropna(subset=['vt'])
+
+        if len(dv) == 0:
+            st.info("No hay valores numericos para graficar. Mapea la columna Valor Total (o Inmueble/Contenidos) al procesar.")
+        else:
+            moneda_lbl = dv['moneda'].mode().iloc[0] if len(dv['moneda'].mode()) else 'MXN'
+            total_val = dv['vt'].sum()
+            m1, m2 = st.columns(2)
+            m1.metric("Valor Total asegurado", f"${total_val:,.0f} {moneda_lbl}")
+            m2.metric("Ubicaciones con valor", len(dv))
+            st.markdown("---")
+
+            def bar_valor(col, titulo, horizontal=False):
+                d = dv[dv[col].astype(str).str.strip() != '']
+                if len(d) == 0:
+                    st.info(f"Sin datos para {titulo}")
+                    return
+                g = d.groupby(col)['vt'].sum().reset_index().sort_values('vt', ascending=False)
+                g.columns = [titulo, 'Valor']
+                if horizontal:
+                    fig = px.bar(g, y=titulo, x='Valor', orientation='h',
+                                 color_discrete_sequence=[SUMMA_AZUL])
+                    fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+                else:
+                    fig = px.bar(g, x=titulo, y='Valor', color_discrete_sequence=[SUMMA_AZUL])
+                fig.update_layout(height=340, margin=dict(t=30, b=10, l=10, r=10), plot_bgcolor='white')
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("**Valor Total por Estado**")
+            bar_valor('estado_geo', 'Estado', horizontal=True)
+
+            v1, v2, v3 = st.columns(3)
+            with v1:
+                st.markdown("**Por Zona Sismica**"); bar_valor('zona_sismica', 'Zona Sismica')
+            with v2:
+                st.markdown("**Por Zona Cresta**"); bar_valor('zona_cresta', 'Zona Cresta')
+            with v3:
+                st.markdown("**Por Hidro2 (Huracan)**"); bar_valor('hidro2', 'Hidro2')
