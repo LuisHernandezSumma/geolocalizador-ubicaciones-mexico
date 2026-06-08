@@ -49,19 +49,24 @@ div[data-baseweb="tab-highlight"] {{ background-color: {SUMMA_AZUL}; }}
 [data-testid="stMetric"] {{ background: {SUMMA_AZUL_CLARO}; border-radius: 8px;
     padding: 10px 14px; border-left: 4px solid {SUMMA_AZUL}; }}
 [data-testid="stMetricValue"] {{ color: {SUMMA_AZUL}; }}
+/* Etiquetas de selectbox tipo chip (el emoji verde/blanco indica deteccion) */
+.stSelectbox label {{
+    background-color: {SUMMA_GRIS_COMBO};
+    padding: 2px 10px; border-radius: 6px;
+    font-weight: 600 !important; color: {SUMMA_AZUL} !important;
+}}
 /* Combos del mapeo con fondo gris suave */
 div[data-baseweb="select"] > div {{
     background-color: {SUMMA_GRIS_COMBO} !important;
     border-color: #B8BFC4 !important;
 }}
-/* Etiquetas de los widgets con un toque gris/azul */
-.stSelectbox label, .stTextInput label, .stSlider label {{
+/* Etiquetas: negrita, el color de fondo se asigna por campo segun deteccion */
+.stTextInput label, .stSlider label {{
     background-color: {SUMMA_GRIS_COMBO};
-    padding: 2px 10px;
-    border-radius: 6px;
-    font-weight: 600 !important;
-    color: {SUMMA_AZUL} !important;
+    padding: 2px 10px; border-radius: 6px;
+    font-weight: 600 !important; color: {SUMMA_AZUL} !important;
 }}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -166,8 +171,11 @@ if uploaded:
         for i, (fid, (label, kws)) in enumerate(CAMPOS.items()):
             detected = autodetect(kws)
             default_idx = cols.index(detected) if detected and detected in cols else 0
+            # Indicador de estado en la etiqueta: verde si detectado, neutro si no
+            estado_ico = "\U0001F7E2" if detected else "\u26AA"  # circulo verde / circulo blanco
+            label_estado = f"{estado_ico} {label}"
             with (col1 if i % 2 == 0 else col2):
-                sel = st.selectbox(label, cols, index=default_idx, key=f"map_{fid}")
+                sel = st.selectbox(label_estado, cols, index=default_idx, key=f"map_{fid}")
                 mapping[fid] = sel if sel != "- no usar -" else None
 
     # Valores por defecto cuando Negocio/Moneda no vienen en columna
