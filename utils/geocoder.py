@@ -1,3 +1,4 @@
+import pandas as pd
 import time
 import re
 import unicodedata
@@ -330,3 +331,89 @@ def enrich_zones(lat: float, lng: float, cp: str, cp_lookup: dict, kml_zones: di
     if not result['zona_sismica']:
         result.update(get_zones_from_kml(lng, lat, kml_zones))
     return result
+
+
+# ── Exportacion a KML para Google My Maps ─────────────────────────────────────
+
+# Paleta de colores KML por zona sismica (formato aabbggrr de Google Earth)
+_KML_COLORES = {
+    'A':  'ff00b400',  # verde
+    'B':  'ff00d7ff',  # amarillo
+    'B1': 'ff00aaff',  # naranja claro
+    'C':  'ff0078ff',  # naranja
+    'D':  'ff0000ff',  # rojo
+    'E':  'ff8000ff',  # rosa/magenta
+    'F':  'ffff0000',  # azul
+}
+_KML_DEFAULT = 'ff909090'  # gris
+
+
+def _kml_escape(s) -> str:
+    s = str(s or '')
+    return (s.replace('&', '&amp;').replace('<', '&lt;')
+             .replace('>', '&gt;').replace('"', '&quot;'))
+
+
+def build_kml(df_result, nom_col=None, dir_col=None) -> bytes:
+    """Genera un KML con los puntos geocodificados, coloreados por Zona Sismica,
+    listo para importar en Google My Maps."""
+    zonas = sorted({str(z).strip() for z in df_result.get('zona_sismica', [])
+                    if str(z).strip()})
+
+    styles = []
+    for z in zonas:
+        color = _KML_COLORES.get(z, _KML_DEFAULT)
+        styles.append(f"""  <Style id="zs_{_kml_escape(z)}">
+    <IconStyle><color>{color}</color>
+      <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+    </IconStyle>
+  </Style>""")
+    styles.append(f"""  <Style id="zs_default">
+    <IconStyle><color>{_KML_DEFAULT}</color>
+      <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+    </IconStyle>
+  </Style>""")
+
+    placemarks = []
+    for _, row in df_result.iterrows():
+        lat = str(row.get('lat_geo', '')).strip()
+        lng = str(row.get('lng_geo', '')).strip()
+        if not lat or not lng:
+            continue
+        try:
+            latf, lngf = float(lat), float(lng)
+        except (ValueError, TypeError):
+            continue
+
+        nom = str(row[nom_col]) if nom_col and nom_col in row and pd.notna(row[nom_col]) else 'Ubicacion'
+        dir_ = str(row[dir_col]) if dir_col and dir_col in row and pd.notna(row[dir_col]) else ''
+        zs = str(row.get('zona_sismica', '')).strip()
+        style_id = f"zs_{zs}" if zs in zonas else "zs_default"
+
+        desc = f"""<![CDATA[
+          <b>Direccion:</b> {_kml_escape(dir_)}<br/>
+          <b>CP:</b> {_kml_escape(row.get('cp_geo',''))}<br/>
+          <b>Estado:</b> {_kml_escape(row.get('estado_geo',''))}<br/>
+          <b>Municipio:</b> {_kml_escape(row.get('municipio_geo',''))}<br/>
+          <b>Zona Sismica:</b> {_kml_escape(zs)}<br/>
+          <b>Zona Cresta:</b> {_kml_escape(row.get('zona_cresta',''))}<br/>
+          <b>Hidro2:</b> {_kml_escape(row.get('hidro2',''))}<br/>
+          <b>Observacion:</b> {_kml_escape(row.get('observacion',''))}
+        ]]>"""
+
+        placemarks.append(f"""  <Placemark>
+    <name>{_kml_escape(nom)}</name>
+    <description>{desc}</description>
+    <styleUrl>#{style_id}</styleUrl>
+    <Point><coordinates>{lngf},{latf},0</coordinates></Point>
+  </Placemark>""")
+
+    kml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>Ubicaciones SUMMA</name>
+{chr(10).join(styles)}
+{chr(10).join(placemarks)}
+</Document>
+</kml>"""
+    return kml.encode('utf-8')
