@@ -95,19 +95,26 @@ if uploaded:
             'lat':    ('📍 Latitud existente',    ['latitud','latitude','lat']),
             'lng':    ('📍 Longitud existente',   ['longitud','longitude','lon','lng']),
             'est':    ('🗺️ Estado',               ['estado','state','entidad']),
-            'mun':    ('🏙️ Ciudad/Municipio',     ['municipio','ciudad','city','ciudad juarez','locacion','locación']),
-            'cp':     ('📮 CP',                   ['cp','c.p.','c.p','codigo postal','postal','zip','cod postal']),
-            'nom':    ('🏢 Nombre/Sucursal',      ['nombre','nombre del inmueble','sucursal','unidad','tienda']),
-            'dir':    ('📌 Dirección',             ['direccion','dirección','domicilio','address']),
+            'mun':    ('🏙️ Ciudad/Municipio',     ['municipio','ciudad','city','poblacion','población','ciudad juarez','locacion','locación']),
+            'cp':     ('📮 CP',                   ['cp','c.p.','c.p','codigo postal','código postal','postal','zip','cod postal']),
+            'nom':    ('🏢 Nombre/Sucursal',      ['nombre del puente','nombre del inmueble','nombre','sucursal','tienda','unidad','inmueble']),
+            'dir':    ('📌 Dirección',             ['direccion','dirección','domicilio','address','ubicacion','ubicación']),
         }
 
+        import unicodedata
+        def _norm(c):
+            nc = str(c).strip().lower()
+            return ''.join(ch for ch in unicodedata.normalize('NFD', nc) if unicodedata.category(ch) != 'Mn')
+
         def autodetect(field_kw):
+            # Pasada 1: coincidencia exacta
             for col in df.columns:
-                nc = str(col).strip().lower()
-                import unicodedata
-                nc = ''.join(c for c in unicodedata.normalize('NFD', nc) if unicodedata.category(c) != 'Mn')
-                for kw in field_kw:
-                    if nc == kw or nc.startswith(kw):
+                if _norm(col) in field_kw:
+                    return col
+            # Pasada 2: empieza con el alias (alias mas largos primero)
+            for kw in sorted(field_kw, key=len, reverse=True):
+                for col in df.columns:
+                    if _norm(col).startswith(kw):
                         return col
             return None
 

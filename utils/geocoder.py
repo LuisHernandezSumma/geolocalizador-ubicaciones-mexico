@@ -1,4 +1,5 @@
 import time
+import re
 import unicodedata
 import requests
 
@@ -9,6 +10,36 @@ def normalize(s: str) -> str:
     s = str(s or '').strip().lower()
     return ''.join(c for c in unicodedata.normalize('NFD', s)
                    if unicodedata.category(c) != 'Mn')
+
+
+def clean_cp(raw) -> str:
+    """Normaliza un CP a string de 5 digitos.
+    pandas suele leer CPs como float (76246.0) -> se limpia el .0."""
+    if raw is None:
+        return ''
+    s = str(raw).strip()
+    if not s or s.lower() in ('nan', 'none'):
+        return ''
+    try:
+        return str(int(float(s))).zfill(5)
+    except (ValueError, TypeError):
+        # quita cualquier caracter no numerico y rellena
+        digits = re.sub(r'\D', '', s)
+        return digits.zfill(5) if digits else ''
+
+
+def extract_cp_from_text(text: str) -> str:
+    """Extrae un CP embebido dentro de una direccion.
+    Maneja: 'C.P. 01000', 'CP. 02870', 'C.P 14308', 'cp 45685'."""
+    t = str(text or '')
+    m = re.search(r'\b[Cc]\.?\s*[Pp]\.?\s*(\d{5})\b', t)
+    if m:
+        return m.group(1)
+    # fallback: cualquier secuencia aislada de 5 digitos
+    m = re.search(r'\b(\d{5})\b', t)
+    if m:
+        return m.group(1)
+    return ''
 
 
 def point_in_polygon(lng: float, lat: float, polygon: list) -> bool:
@@ -105,13 +136,13 @@ def validate_fields(row_data: dict, geo: dict) -> list:
     if est_r and geo.get('estado_geo'):
         est_g = normalize(geo['estado_geo'])
         if not (est_g in est_r or est_r in est_g):
-            issues.append(f"Estado \"{row_data['est']}\" ≠ geo \"{geo['estado_geo']}\"")
+            issues.append(f"Estado \"{row_data['est']}\" != geo \"{geo['estado_geo']}\"")
     if mun_r and geo.get('municipio_geo'):
         mun_g = normalize(geo['municipio_geo'])
         if not (mun_g in mun_r or mun_r in mun_g):
-            issues.append(f"Municipio \"{row_data['mun']}\" ≠ geo \"{geo['municipio_geo']}\"")
+            issues.append(f"Municipio \"{row_data['mun']}\" != geo \"{geo['municipio_geo']}\"")
     if cp_r and geo.get('cp_geo') and cp_r != geo['cp_geo']:
-        issues.append(f"CP \"{cp_r}\" ≠ geo \"{geo['cp_geo']}\"")
+        issues.append(f"CP \"{cp_r}\" != geo \"{geo['cp_geo']}\"")
     return issues
 
 
@@ -119,13 +150,13 @@ def validate_fields(row_data: dict, geo: dict) -> list:
 
 def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: float = 1.1) -> dict:
     """
-    Geocode a single row using the 6-step fallback strategy:
-    1. Existing coords → reverse geocode + validate
-    2. CP + Estado → CP lookup table
-    3. Solo CP → CP lookup table
-    4. Nombre + Ciudad + Estado → Nominatim
-    5. Ciudad + Estado → Nominatim
-    6. Coords from CP → KML point-in-polygon
+    Geocode a single row using the fallback strategy:
+    1. Existing coords -> reverse geocode + validate
+    2. CP + Estado -> CP lookup table  (CP propio o extraido de la direccion)
+    3. Solo CP -> Nominatim
+    4. Nombre + Ciudad + Estado -> Nominatim
+    5. Ciudad + Estado -> Nominatim
+    6. Coords -> KML point-in-polygon (fallback de zonas)
     """
 
     def gv(fid):
@@ -137,11 +168,18 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
         return ''
 
     lat_s, lng_s = gv('lat'), gv('lng')
-    cp_s = gv('cp').zfill(5) if gv('cp') else ''
     est_s = gv('est')
     mun_s = gv('mun')
     nom_s = gv('nom')
     dir_s = gv('dir')
+
+    # CP: primero la columna propia; si no, se intenta extraer de la direccion
+    cp_s = clean_cp(gv('cp'))
+    if not cp_s and dir_s:
+        cp_s = extract_cp_from_text(dir_s)
+    # tambien intenta extraer del campo nombre/ubicacion si trae el CP ahi
+    if not cp_s and nom_s:
+        cp_s = extract_cp_from_text(nom_s)
 
     row_data = {'lat': lat_s, 'lng': lng_s, 'cp': cp_s,
                 'est': est_s, 'mun': mun_s, 'nom': nom_s}
@@ -152,13 +190,13 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
 
     def enrich_from_cp(cp_key: str) -> dict:
         """Get all zone data from CP lookup."""
-        entry = cp_lookup.get(cp_key.zfill(5), {})
+        entry = cp_lookup.get(clean_cp(cp_key), {})
         return {
             'lat_geo': str(entry.get('lat', '')) if entry.get('lat') else '',
             'lng_geo': str(entry.get('lng', '')) if entry.get('lng') else '',
             'estado_geo': entry.get('estado', ''),
             'municipio_geo': entry.get('municipio', ''),
-            'cp_geo': cp_key,
+            'cp_geo': clean_cp(cp_key),
             'zona_sismica': entry.get('zona_sismica', ''),
             'zona_cresta': entry.get('zona_cresta', ''),
             'hidro2': entry.get('hidro2', ''),
@@ -166,8 +204,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
 
     def enrich_zones_from_coords(lat: float, lng: float) -> dict:
         """Get zone data from KML polygons given coords."""
-        zones = get_zones_from_kml(lng, lat, kml_zones)
-        return zones
+        return get_zones_from_kml(lng, lat, kml_zones)
 
     # ── Step 1: Existing coords ───────────────────────────────────────────────
     if lat_s and lng_s:
@@ -181,16 +218,13 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                           'municipio_geo': geo['municipio_geo'],
                           'cp_geo': geo['cp_geo'],
                           'metodo': '1-coords-inverso'}
-                # Enrich zones from CP if available
                 if geo['cp_geo']:
                     z = enrich_from_cp(geo['cp_geo'])
                     result['zona_sismica'] = z['zona_sismica']
                     result['zona_cresta'] = z['zona_cresta']
                     result['hidro2'] = z['hidro2']
-                # Fallback zones from KML
                 if not result['zona_sismica']:
-                    kz = enrich_zones_from_coords(lat_f, lng_f)
-                    result.update(kz)
+                    result.update(enrich_zones_from_coords(lat_f, lng_f))
                 issues = validate_fields(row_data, result)
                 result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK'
                 return result
@@ -202,18 +236,15 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
         entry = cp_lookup.get(cp_s)
         if entry:
             result = {**base, **enrich_from_cp(cp_s), 'metodo': '2-CP+lookup'}
-            # Validate estado
             issues = []
             if est_s and entry.get('estado'):
                 if normalize(est_s) not in normalize(entry['estado']) and \
                    normalize(entry['estado']) not in normalize(est_s):
-                    issues.append(f"Estado \"{est_s}\" ≠ lookup \"{entry['estado']}\"")
+                    issues.append(f"Estado \"{est_s}\" != lookup \"{entry['estado']}\"")
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP lookup)'
-            # If no zones in CP table, try KML
             if not result['zona_sismica'] and result['lat_geo']:
                 try:
-                    kz = enrich_zones_from_coords(float(result['lat_geo']), float(result['lng_geo']))
-                    result.update(kz)
+                    result.update(enrich_zones_from_coords(float(result['lat_geo']), float(result['lng_geo'])))
                 except Exception:
                     pass
             return result
@@ -233,8 +264,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
             result['zona_cresta'] = z['zona_cresta']
             result['hidro2'] = z['hidro2']
             if not result['zona_sismica']:
-                kz = enrich_zones_from_coords(geo['lat'], geo['lng'])
-                result.update(kz)
+                result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
             issues = validate_fields(row_data, result)
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP Nominatim)'
             return result
@@ -257,8 +287,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                 result['zona_cresta'] = z['zona_cresta']
                 result['hidro2'] = z['hidro2']
             if not result['zona_sismica']:
-                kz = enrich_zones_from_coords(geo['lat'], geo['lng'])
-                result.update(kz)
+                result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
             issues = validate_fields(row_data, result)
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (nombre+ciudad)'
             return result
@@ -281,27 +310,23 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                 result['zona_cresta'] = z['zona_cresta']
                 result['hidro2'] = z['hidro2']
             if not result['zona_sismica']:
-                kz = enrich_zones_from_coords(geo['lat'], geo['lng'])
-                result.update(kz)
+                result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
             issues = validate_fields(row_data, result)
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (ciudad+estado)'
             return result
 
-    # ── Step 6: Sin coordenadas ───────────────────────────────────────────────
-    result = {**base, 'metodo': '—', 'observacion': 'Sin datos suficientes para geocodificar'}
-    return result
+    # ── Step 6: Sin datos suficientes ─────────────────────────────────────────
+    return {**base, 'metodo': '-', 'observacion': 'Sin datos suficientes para geocodificar'}
 
 
 def enrich_zones(lat: float, lng: float, cp: str, cp_lookup: dict, kml_zones: dict) -> dict:
     """Get zone data from CP lookup first, then KML fallback."""
-    cp_key = str(cp).zfill(5)
-    entry = cp_lookup.get(cp_key, {})
+    entry = cp_lookup.get(clean_cp(cp), {})
     result = {
         'zona_sismica': entry.get('zona_sismica', ''),
         'zona_cresta': entry.get('zona_cresta', ''),
         'hidro2': entry.get('hidro2', ''),
     }
     if not result['zona_sismica']:
-        kz = get_zones_from_kml(lng, lat, kml_zones)
-        result.update(kz)
+        result.update(get_zones_from_kml(lng, lat, kml_zones))
     return result
