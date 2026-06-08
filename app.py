@@ -17,6 +17,7 @@ SUMMA_ROSA = "#F2DBED"        # rosa claro - seccion alterna
 SUMMA_GRIS = "#6B7280"        # texto gris
 SUMMA_GRIS_CLARO = "#ECECEC"  # fondos
 SUMMA_AZUL_CLARO = "#EaEFF7"  # fondo suave
+SUMMA_GRIS_COMBO = "#D4D9DC"  # gris suave para combos/titulos
 # Secuencia de colores para graficas multi-categoria
 SUMMA_PALETA = ["#003EA5", "#688BC6", "#ADBCDD", "#C9E7DD", "#9BC4B5",
                 "#F2DBED", "#D4A5C9", "#86A1CE", "#5B7BB4", "#B8C8E0"]
@@ -48,6 +49,19 @@ div[data-baseweb="tab-highlight"] {{ background-color: {SUMMA_AZUL}; }}
 [data-testid="stMetric"] {{ background: {SUMMA_AZUL_CLARO}; border-radius: 8px;
     padding: 10px 14px; border-left: 4px solid {SUMMA_AZUL}; }}
 [data-testid="stMetricValue"] {{ color: {SUMMA_AZUL}; }}
+/* Combos del mapeo con fondo gris suave */
+div[data-baseweb="select"] > div {{
+    background-color: {SUMMA_GRIS_COMBO} !important;
+    border-color: #B8BFC4 !important;
+}}
+/* Etiquetas de los widgets con un toque gris/azul */
+.stSelectbox label, .stTextInput label, .stSlider label {{
+    background-color: {SUMMA_GRIS_COMBO};
+    padding: 2px 10px;
+    border-radius: 6px;
+    font-weight: 600 !important;
+    color: {SUMMA_AZUL} !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -64,8 +78,8 @@ st.markdown(f"""
             display:flex;align-items:center;gap:18px">
   {logo_img}
   <div>
-    <div style="font-size:1.7rem;font-weight:700;color:#fff;line-height:1.1">Geolocalizador de Ubicaciones Mexico</div>
-    <div style="font-size:0.9rem;color:#C7D4E4">Coordenadas, zonas sismicas, cresta e hidrometeorologicas &middot; Intermediario de Reaseguro</div>
+    <div style="font-size:1.7rem;font-weight:700;color:#fff;line-height:1.1">Geolocalizador de Ubicaciones México</div>
+    <div style="font-size:0.9rem;color:#C7D4E4">Coordenadas, zonas sísmicas, cresta e hidrometeorológicas &middot; Intermediario de Reaseguro</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -79,22 +93,22 @@ cp_lookup, kml_zones = get_reference_data()
 with st.sidebar:
     if logo:
         st.markdown(f'<img src="data:image/png;base64,{logo}" style="width:160px;margin-bottom:12px"/>', unsafe_allow_html=True)
-    st.markdown("### Configuracion")
+    st.markdown("### Configuración")
     st.markdown(f"**{len(cp_lookup):,}** CPs en base de referencia")
     st.markdown("---")
-    st.markdown("**Estrategia de busqueda:**")
-    st.markdown("1. Coordenadas existentes -> inverso")
+    st.markdown("**Estrategia de búsqueda:**")
+    st.markdown("1. Coordenadas existentes → inverso")
     st.markdown("2. CP + Estado")
     st.markdown("3. Solo CP")
     st.markdown("4. Nombre + Ciudad + Estado")
     st.markdown("5. Ciudad + Estado")
-    st.markdown("6. Punto en poligono KML")
+    st.markdown("6. Punto en polígono KML")
     st.markdown("---")
     delay = st.slider("Delay entre requests (seg)", 1.0, 3.0, 1.1, 0.1,
                       help="Para respetar el rate limit de Nominatim")
 
 uploaded = st.file_uploader("Selecciona tu archivo Excel", type=["xlsx", "xls"],
-    help="El archivo puede tener cualquier formato - direccion, CP, estado, ciudad, lat/lng")
+    help="El archivo puede tener cualquier formato: dirección, CP, estado, ciudad, lat/lng")
 
 if uploaded:
     from openpyxl import load_workbook
@@ -125,7 +139,7 @@ if uploaded:
             'mun': ('🏙️ Ciudad/Municipio', ['municipio', 'ciudad', 'city', 'poblacion', 'poblacion', 'ciudad juarez', 'locacion', 'locacion']),
             'cp':  ('📮 CP',                 ['cp', 'c.p.', 'c.p', 'codigo postal', 'codigo postal', 'postal', 'zip', 'cod postal']),
             'nom': ('🏢 Nombre/Sucursal/Edificio', ['nombre del puente', 'nombre del inmueble', 'nombre', 'sucursal', 'tienda', 'unidad']),
-            'dir': ('📌 Direccion',          ['direccion', 'direccion', 'domicilio', 'address', 'ubicacion', 'ubicacion']),
+            'dir': ('📌 Dirección',          ['direccion', 'direccion', 'domicilio', 'address', 'ubicacion', 'ubicacion']),
             'neg': ('💼 Negocio',            ['negocio', 'grupo', 'asegurado', 'cliente', 'ramo', 'dependencia']),
             'mon': ('💱 Moneda',             ['moneda', 'divisa', 'currency']),
             'vinm':('🏛️ Valor Inmueble', ['valor inmueble', 'valor inm', 'inmueble', 'edificio', 'edificios', 'valor edificio', 'suma asegurada edificio']),
@@ -177,12 +191,12 @@ if uploaded:
                 icon = "OK" if val and val != 'nan' else "-"
                 st.caption(f"{icon} {label}: **{val or '-'}**")
             if has_coords:
-                st.info(f"Modo: **inverso** - reverseGeocode({float(lat0):.5f}, {float(lng0):.5f})")
+                st.info(f"Modo: **inverso** → reverseGeocode({float(lat0):.5f}, {float(lng0):.5f})")
             elif cp0:
-                st.info(f"Modo: **CP lookup** - CP={cp0}")
+                st.info(f"Modo: **CP lookup** → CP={cp0}")
             else:
                 nom = gv(row0, 'nom'); mun = gv(row0, 'mun'); est = gv(row0, 'est')
-                st.info(f"Modo: **Nominatim** - {', '.join(filter(None, [nom, mun, est, 'Mexico']))}")
+                st.info(f"Modo: **Nominatim** → {', '.join(filter(None, [nom, mun, est, 'Mexico']))}")
 
     if st.button("Procesar", type="primary", use_container_width=True):
         results = []
@@ -281,7 +295,7 @@ if 'results' in st.session_state:
 
     with tab1:
         st.markdown("### Puntos geocodificados")
-        search = st.text_input("Buscar por estado, CP, nombre/sucursal o direccion",
+        search = st.text_input("Buscar por estado, CP, nombre/sucursal o dirección",
                                placeholder="Escribe para filtrar...")
 
         def opts_with_count(col):
@@ -293,9 +307,9 @@ if 'results' in st.session_state:
             return label.rsplit(" (", 1)[0] if label else ""
 
         fc1, fc2, fc3 = st.columns(3)
-        fzs = fc1.selectbox("Zona Sismica", opts_with_count('zona_sismica'), format_func=lambda x: x if x else "-")
+        fzs = fc1.selectbox("Zona Sísmica", opts_with_count('zona_sismica'), format_func=lambda x: x if x else "-")
         fzc = fc2.selectbox("Zona Cresta", opts_with_count('zona_cresta'), format_func=lambda x: x if x else "-")
-        fh2 = fc3.selectbox("Hidro2", opts_with_count('hidro2'), format_func=lambda x: x if x else "-")
+        fh2 = fc3.selectbox("Huracán (Hidro2)", opts_with_count('hidro2'), format_func=lambda x: x if x else "-")
 
         df_map = df_result[df_result['lat_geo'] != ''].copy()
         df_map['lat_f'] = pd.to_numeric(df_map['lat_geo'], errors='coerce')
@@ -327,11 +341,11 @@ if 'results' in st.session_state:
                   <b>Estado:</b> {row.get('estado_geo','')}<br>
                   <b>Municipio:</b> {row.get('municipio_geo','')}<br>
                   <hr style="margin:6px 0">
-                  <b>Zona Sismica:</b> {row.get('zona_sismica','')}<br>
+                  <b>Zona Sísmica:</b> {row.get('zona_sismica','')}<br>
                   <b>Zona Cresta:</b> {row.get('zona_cresta','')}<br>
-                  <b>Hidro2:</b> {row.get('hidro2','')}<br>
+                  <b>Huracán:</b> {row.get('hidro2','')}<br>
                   <hr style="margin:6px 0">
-                  <span style="font-size:11px;color:#888">Metodo: {row.get('metodo','')}</span><br>
+                  <span style="font-size:11px;color:#888">Método: {row.get('metodo','')}</span><br>
                   <span style="font-size:11px;color:#888">{html.escape(obs[:80])}</span>
                 </div>"""
                 folium.Marker(location=[row['lat_f'], row['lng_f']],
@@ -358,10 +372,10 @@ if 'results' in st.session_state:
         cdl2.download_button("Descargar KML (Google My Maps)", kml_bytes,
             file_name="ubicaciones_summa.kml",
             mime="application/vnd.google-earth.kml+xml", use_container_width=True)
-        st.caption("El KML se colorea por Zona Sismica. Importalo en mymaps.google.com -> Crear mapa -> Importar.")
+        st.caption("El KML se colorea por Zona Sísmica. Impórtalo en mymaps.google.com → Crear mapa → Importar.")
 
         st.markdown("---")
-        st.markdown("**CSV para Power BI** (columnas genericas y limpias)")
+        st.markdown("**CSV para Power BI** (columnas genéricas y limpias)")
         # CSV generico: 14 columnas estandarizadas, una fila por punto
         nom_c = mapping.get('nom')
         csv_df = pd.DataFrame({
@@ -383,7 +397,7 @@ if 'results' in st.session_state:
         csv_bytes = csv_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         st.download_button("Descargar CSV para Power BI", csv_bytes,
             file_name="datos_powerbi.csv", mime="text/csv", use_container_width=True)
-        st.caption("Sube este CSV a la carpeta que lee Power BI. Codificacion UTF-8 con BOM para acentos.")
+        st.caption("Sube este CSV a la carpeta que lee Power BI. Codificación UTF-8 con BOM para acentos.")
 
     with tab3:
         st.markdown("### Resumen por zonas y estados")
@@ -415,12 +429,12 @@ if 'results' in st.session_state:
 
         g1, g2 = st.columns(2)
         with g1:
-            st.markdown("**Por Zona Sismica**"); bar('zona_sismica', 'Zona Sismica')
+            st.markdown("**Por Zona Sísmica**"); bar('zona_sismica', 'Zona Sísmica')
         with g2:
             st.markdown("**Por Zona Cresta**"); bar('zona_cresta', 'Zona Cresta')
         g3, g4 = st.columns(2)
         with g3:
-            st.markdown("**Por Hidro2**"); bar('hidro2', 'Hidro2')
+            st.markdown("**Por Huracán**"); bar('hidro2', 'Huracán')
         with g4:
             st.markdown("**Por Estado**"); bar('estado_geo', 'Estado')
 
@@ -465,8 +479,8 @@ if 'results' in st.session_state:
 
             v1, v2, v3 = st.columns(3)
             with v1:
-                st.markdown("**Por Zona Sismica**"); bar_valor('zona_sismica', 'Zona Sismica')
+                st.markdown("**Por Zona Sísmica**"); bar_valor('zona_sismica', 'Zona Sísmica')
             with v2:
                 st.markdown("**Por Zona Cresta**"); bar_valor('zona_cresta', 'Zona Cresta')
             with v3:
-                st.markdown("**Por Hidro2 (Huracan)**"); bar_valor('hidro2', 'Hidro2')
+                st.markdown("**Por Huracán**"); bar_valor('hidro2', 'Huracán')
