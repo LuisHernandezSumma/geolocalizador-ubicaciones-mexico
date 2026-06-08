@@ -222,7 +222,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                           'estado_geo': geo['estado_geo'],
                           'municipio_geo': geo['municipio_geo'],
                           'cp_geo': geo['cp_geo'],
-                          'metodo': '1-coords-inverso'}
+                          'metodo': '1-Coordenadas (inverso)'}
                 if geo['cp_geo']:
                     z = enrich_from_cp(geo['cp_geo'])
                     result['zona_sismica'] = z['zona_sismica']
@@ -251,11 +251,11 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
             if conflicto_estado and not cp_propio:
                 cp_s = ''  # descartar y caer a pasos siguientes
             else:
-                result = {**base, **enrich_from_cp(cp_s), 'metodo': '2-CP+lookup'}
+                result = {**base, **enrich_from_cp(cp_s), 'metodo': '2-CP en catálogo'}
                 issues = []
                 if conflicto_estado:
                     issues.append(f"Estado \"{est_s}\" != lookup \"{entry['estado']}\"")
-                result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP lookup)'
+                result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP en catálogo)'
                 if not result['zona_sismica'] and result['lat_geo']:
                     try:
                         result.update(enrich_zones_from_coords(float(result['lat_geo']), float(result['lng_geo'])))
@@ -272,7 +272,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                       'estado_geo': geo['estado_geo'],
                       'municipio_geo': geo['municipio_geo'],
                       'cp_geo': geo['cp_geo'] or cp_s,
-                      'metodo': '3-solo-CP'}
+                      'metodo': '3-Solo CP'}
             z = enrich_from_cp(geo['cp_geo'] or cp_s)
             result['zona_sismica'] = z['zona_sismica']
             result['zona_cresta'] = z['zona_cresta']
@@ -280,7 +280,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
             if not result['zona_sismica']:
                 result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
             issues = validate_fields(row_data, result)
-            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP Nominatim)'
+            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP por Nominatim)'
             return result
 
     # ── Step 4: Nombre + Ciudad + Estado → Nominatim ─────────────────────────
@@ -294,7 +294,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                       'estado_geo': geo['estado_geo'],
                       'municipio_geo': geo['municipio_geo'],
                       'cp_geo': geo['cp_geo'],
-                      'metodo': '4-nombre+ciudad'}
+                      'metodo': '4-Nombre + Ciudad'}
             if geo['cp_geo']:
                 z = enrich_from_cp(geo['cp_geo'])
                 result['zona_sismica'] = z['zona_sismica']
@@ -303,7 +303,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
             if not result['zona_sismica']:
                 result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
             issues = validate_fields(row_data, result)
-            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (nombre+ciudad)'
+            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (nombre + ciudad)'
             return result
 
     # ── Step 5: Ciudad + Estado → Nominatim ──────────────────────────────────
@@ -317,7 +317,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
                       'estado_geo': geo['estado_geo'],
                       'municipio_geo': geo['municipio_geo'],
                       'cp_geo': geo['cp_geo'],
-                      'metodo': '5-ciudad+estado'}
+                      'metodo': '5-Ciudad + Estado'}
             if geo['cp_geo']:
                 z = enrich_from_cp(geo['cp_geo'])
                 result['zona_sismica'] = z['zona_sismica']
@@ -326,7 +326,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
             if not result['zona_sismica']:
                 result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
             issues = validate_fields(row_data, result)
-            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (ciudad+estado)'
+            result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (ciudad + estado)'
             return result
 
     # ── Step 6: Sin datos suficientes ─────────────────────────────────────────

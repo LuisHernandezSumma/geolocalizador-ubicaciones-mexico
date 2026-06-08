@@ -193,7 +193,7 @@ if uploaded:
             if has_coords:
                 st.info(f"Modo: **inverso** → reverseGeocode({float(lat0):.5f}, {float(lng0):.5f})")
             elif cp0:
-                st.info(f"Modo: **CP lookup** → CP={cp0}")
+                st.info(f"Modo: **CP en catálogo** → CP={cp0}")
             else:
                 nom = gv(row0, 'nom'); mun = gv(row0, 'mun'); est = gv(row0, 'est')
                 st.info(f"Modo: **Nominatim** → {', '.join(filter(None, [nom, mun, est, 'Mexico']))}")
