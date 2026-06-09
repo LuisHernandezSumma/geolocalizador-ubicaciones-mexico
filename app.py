@@ -76,6 +76,13 @@ div[data-testid="stElementContainer"]:has(.mk-no) + div[data-testid="stElementCo
     padding: 2px 10px; border-radius: 6px;
     font-weight: 600 !important; color: {SUMMA_AZUL} !important;
 }}
+/* Campos de texto con fondo gris para que se distingan del fondo blanco */
+.stTextInput input {{
+    background-color: {SUMMA_GRIS_COMBO} !important;
+    border: 1px solid #B8BFC4 !important;
+    border-radius: 6px !important;
+}}
+.stTextInput input::placeholder {{ color: #7A7F85 !important; }}
 
 </style>
 """, unsafe_allow_html=True)
@@ -148,10 +155,32 @@ with tab_punto:
             r = geocode_single(punto_txt, cp_lookup, kml_zones, delay, GOOGLE_API_KEY)
         if r.get('lat_geo'):
             st.success(f"Encontrado por: {r.get('metodo','')}")
-            i1, i2, i3 = st.columns(3)
-            i1.metric("Zona Sísmica", r.get('zona_sismica') or "—")
-            i2.metric("Zona Cresta", r.get('zona_cresta') or "—")
-            i3.metric("Huracán", r.get('hidro2') or "—")
+            # Resultado resaltado en marco azul para que no pase desapercibido
+            zs = r.get('zona_sismica') or "—"
+            zc = r.get('zona_cresta') or "—"
+            zh = r.get('hidro2') or "—"
+            st.markdown(f"""
+            <div style="border:2px solid {SUMMA_AZUL};border-radius:12px;
+                        background:{SUMMA_AZUL_CLARO};padding:16px 18px;margin:8px 0 4px">
+              <div style="display:flex;gap:14px;flex-wrap:wrap">
+                <div style="flex:1;min-width:150px;background:#fff;border-radius:8px;
+                            padding:10px 14px;border-left:5px solid {SUMMA_AZUL}">
+                  <div style="font-size:12px;color:{SUMMA_GRIS};font-weight:600">ZONA SÍSMICA</div>
+                  <div style="font-size:28px;font-weight:700;color:{SUMMA_AZUL}">{zs}</div>
+                </div>
+                <div style="flex:1;min-width:150px;background:#fff;border-radius:8px;
+                            padding:10px 14px;border-left:5px solid {SUMMA_AZUL}">
+                  <div style="font-size:12px;color:{SUMMA_GRIS};font-weight:600">ZONA CRESTA</div>
+                  <div style="font-size:28px;font-weight:700;color:{SUMMA_AZUL}">{zc}</div>
+                </div>
+                <div style="flex:1;min-width:150px;background:#fff;border-radius:8px;
+                            padding:10px 14px;border-left:5px solid {SUMMA_AZUL}">
+                  <div style="font-size:12px;color:{SUMMA_GRIS};font-weight:600">ZONA HURACÁN</div>
+                  <div style="font-size:28px;font-weight:700;color:{SUMMA_AZUL}">{zh}</div>
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
             d1, d2, d3 = st.columns(3)
             d1.caption(f"**Estado:** {r.get('estado_geo') or '—'}")
             d2.caption(f"**Municipio:** {r.get('municipio_geo') or '—'}")
@@ -163,7 +192,7 @@ with tab_punto:
                     tooltip=punto_txt,
                     popup=folium.Popup(
                         f"<b>{punto_txt}</b><br>Sísmica: {r.get('zona_sismica','')}<br>"
-                        f"Cresta: {r.get('zona_cresta','')}<br>Huracán: {r.get('hidro2','')}",
+                        f"Cresta: {r.get('zona_cresta','')}<br>Zona Huracán: {r.get('hidro2','')}",
                         max_width=240),
                     icon=folium.Icon(color='blue', icon='map-pin', prefix='fa')
                 ).add_to(mp)
@@ -387,7 +416,7 @@ with tab_excel:
             fc1, fc2, fc3 = st.columns(3)
             fzs = fc1.selectbox("Zona Sísmica", opts_with_count('zona_sismica'), format_func=lambda x: x if x else "-")
             fzc = fc2.selectbox("Zona Cresta", opts_with_count('zona_cresta'), format_func=lambda x: x if x else "-")
-            fh2 = fc3.selectbox("Huracán (Hidro2)", opts_with_count('hidro2'), format_func=lambda x: x if x else "-")
+            fh2 = fc3.selectbox("Zona Huracán", opts_with_count('hidro2'), format_func=lambda x: x if x else "-")
 
             df_map = df_result[df_result['lat_geo'] != ''].copy()
             df_map['lat_f'] = pd.to_numeric(df_map['lat_geo'], errors='coerce')
@@ -421,7 +450,7 @@ with tab_excel:
                       <hr style="margin:6px 0">
                       <b>Zona Sísmica:</b> {row.get('zona_sismica','')}<br>
                       <b>Zona Cresta:</b> {row.get('zona_cresta','')}<br>
-                      <b>Huracán:</b> {row.get('hidro2','')}<br>
+                      <b>Zona Huracán:</b> {row.get('hidro2','')}<br>
                       <hr style="margin:6px 0">
                       <span style="font-size:11px;color:#888">Método: {row.get('metodo','')}</span><br>
                       <span style="font-size:11px;color:#888">{html.escape(obs[:80])}</span>
@@ -512,7 +541,7 @@ with tab_excel:
                 st.markdown("**Por Zona Cresta**"); bar('zona_cresta', 'Zona Cresta')
             g3, g4 = st.columns(2)
             with g3:
-                st.markdown("**Por Huracán**"); bar('hidro2', 'Huracán')
+                st.markdown("**Por Zona Huracán**"); bar('hidro2', 'Zona Huracán')
             with g4:
                 st.markdown("**Por Estado**"); bar('estado_geo', 'Estado')
 
@@ -561,4 +590,4 @@ with tab_excel:
                 with v2:
                     st.markdown("**Por Zona Cresta**"); bar_valor('zona_cresta', 'Zona Cresta')
                 with v3:
-                    st.markdown("**Por Huracán**"); bar_valor('hidro2', 'Huracán')
+                    st.markdown("**Por Zona Huracán**"); bar_valor('hidro2', 'Zona Huracán')
