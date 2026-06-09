@@ -6,7 +6,7 @@ import plotly.express as px
 import json, gzip, pickle, time, io, base64, html
 from pathlib import Path
 from utils.geocoder import geocode_row, enrich_zones, build_kml, geocode_single
-from utils.data_loader import load_cp_lookup, load_kml_zones
+from utils.data_loader import load_cp_lookup, load_kml_zones, load_zonas_display
 
 # Paleta institucional SUMMA (extraida del tablero Power BI)
 SUMMA_AZUL = "#003EA5"        # azul fuerte - headers, botones
@@ -108,9 +108,9 @@ st.markdown(f"""
 
 @st.cache_resource(show_spinner="Cargando datos de referencia...")
 def get_reference_data():
-    return load_cp_lookup(), load_kml_zones()
+    return load_cp_lookup(), load_kml_zones(), load_zonas_display()
 
-cp_lookup, kml_zones = get_reference_data()
+cp_lookup, kml_zones, zonas_display = get_reference_data()
 
 with st.sidebar:
     if logo:
@@ -435,6 +435,37 @@ with tab_excel:
             if len(df_map) > 0:
                 m = folium.Map(location=[df_map['lat_f'].mean(), df_map['lng_f'].mean()],
                                zoom_start=5, tiles='CartoDB positron')
+
+                # Capas de zonas (poligonos simplificados) con control on/off.
+                # Solo "Zona Sísmica" encendida por defecto.
+                _paleta = ['#003EA5', '#688BC6', '#ADBCDD', '#C9E7DD', '#9BC4B5',
+                           '#F2DBED', '#D4A5C9', '#86A1CE', '#5B7BB4', '#E8A87C',
+                           '#7FBF95', '#C45B5B']
+                def _agregar_capa(cat_key, nombre_capa, encendida):
+                    polys = zonas_display.get(cat_key, [])
+                    if not polys:
+                        return
+                    fg = folium.FeatureGroup(name=nombre_capa, show=encendida)
+                    nombres = sorted({p['name'] for p in polys})
+                    color_de = {n: _paleta[i % len(_paleta)] for i, n in enumerate(nombres)}
+                    for p in polys:
+                        coords = p.get('polygon', [])
+                        if len(coords) < 3:
+                            continue
+                        # coords vienen como [lng, lat]; Folium usa [lat, lng]
+                        latlon = [[c[1], c[0]] for c in coords]
+                        col = color_de.get(p['name'], '#003EA5')
+                        folium.Polygon(locations=latlon, color=col, weight=1,
+                                       fill=True, fill_color=col, fill_opacity=0.25,
+                                       tooltip=f"{nombre_capa}: {p['name']}").add_to(fg)
+                    fg.add_to(m)
+
+                _agregar_capa('sismicas', 'Zona Sísmica', True)
+                _agregar_capa('cresta', 'Zona Cresta', False)
+                _agregar_capa('huracanes', 'Zona Huracán', False)
+
+                # Marcadores de las ubicaciones (siempre visibles)
+                fg_pts = folium.FeatureGroup(name='Ubicaciones', show=True)
                 for _, row in df_map.iterrows():
                     obs = str(row.get('observacion', ''))
                     color = 'green' if obs.startswith('OK') else 'orange' if 'CONFLICTO' in obs else 'red'
@@ -458,7 +489,10 @@ with tab_excel:
                     folium.Marker(location=[row['lat_f'], row['lng_f']],
                                   popup=folium.Popup(popup_html, max_width=280),
                                   tooltip=nom or f"Fila {row.name+1}",
-                                  icon=folium.Icon(color=color, icon='home', prefix='fa')).add_to(m)
+                                  icon=folium.Icon(color=color, icon='home', prefix='fa')).add_to(fg_pts)
+                fg_pts.add_to(m)
+
+                folium.LayerControl(collapsed=False).add_to(m)
                 st_folium(m, width=None, height=550, returned_objects=[])
             else:
                 st.warning("No hay puntos con coordenadas para mostrar con los filtros actuales.")
