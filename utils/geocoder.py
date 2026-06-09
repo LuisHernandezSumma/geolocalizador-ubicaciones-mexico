@@ -78,6 +78,28 @@ def get_zones_from_kml(lng: float, lat: float, kml_zones: dict) -> dict:
     return result
 
 
+def completar_zonas_faltantes(result: dict, kml_zones: dict) -> None:
+    """Completa SOLO las zonas vacias (sismica, cresta, hidro2) usando los
+    poligonos KML, a partir de las coordenadas del result. Modifica result
+    in-place. Cada zona se evalua por separado: si el catalogo trajo sismica
+    pero no cresta/hidro2, igual se buscan esas dos en el KML."""
+    faltan = [z for z in ('zona_sismica', 'zona_cresta', 'hidro2')
+              if not str(result.get(z, '')).strip()]
+    if not faltan:
+        return
+    lat_s, lng_s = result.get('lat_geo', ''), result.get('lng_geo', '')
+    if not lat_s or not lng_s:
+        return
+    try:
+        lat_f, lng_f = float(lat_s), float(lng_s)
+    except (ValueError, TypeError):
+        return
+    kml = get_zones_from_kml(lng_f, lat_f, kml_zones)
+    for z in faltan:
+        if kml.get(z):
+            result[z] = kml[z]
+
+
 def parse_nominatim(data: dict) -> dict:
     """Parse Nominatim response into standardized dict."""
     a = data.get('address', {})
@@ -277,8 +299,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
                     result['zona_sismica'] = z['zona_sismica']
                     result['zona_cresta'] = z['zona_cresta']
                     result['hidro2'] = z['hidro2']
-                if not result['zona_sismica']:
-                    result.update(enrich_zones_from_coords(lat_f, lng_f))
+                completar_zonas_faltantes(result, kml_zones)
                 issues = validate_fields(row_data, result)
                 result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK'
                 return result
@@ -305,11 +326,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
                 if conflicto_estado:
                     issues.append(f"Estado \"{est_s}\" != lookup \"{entry['estado']}\"")
                 result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP en catálogo)'
-                if not result['zona_sismica'] and result['lat_geo']:
-                    try:
-                        result.update(enrich_zones_from_coords(float(result['lat_geo']), float(result['lng_geo'])))
-                    except Exception:
-                        pass
+                completar_zonas_faltantes(result, kml_zones)
                 return result
 
     # ── Step 3: Solo CP → Nominatim ──────────────────────────────────────────
@@ -326,8 +343,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
             result['zona_sismica'] = z['zona_sismica']
             result['zona_cresta'] = z['zona_cresta']
             result['hidro2'] = z['hidro2']
-            if not result['zona_sismica']:
-                result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
+            completar_zonas_faltantes(result, kml_zones)
             issues = validate_fields(row_data, result)
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (CP por Nominatim)'
             return result
@@ -349,8 +365,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
                 result['zona_sismica'] = z['zona_sismica']
                 result['zona_cresta'] = z['zona_cresta']
                 result['hidro2'] = z['hidro2']
-            if not result['zona_sismica']:
-                result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
+            completar_zonas_faltantes(result, kml_zones)
             issues = validate_fields(row_data, result)
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (nombre + ciudad)'
             return result
@@ -372,8 +387,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
                 result['zona_sismica'] = z['zona_sismica']
                 result['zona_cresta'] = z['zona_cresta']
                 result['hidro2'] = z['hidro2']
-            if not result['zona_sismica']:
-                result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
+            completar_zonas_faltantes(result, kml_zones)
             issues = validate_fields(row_data, result)
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (ciudad + estado)'
             return result
@@ -397,8 +411,7 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
                     result['zona_sismica'] = z['zona_sismica']
                     result['zona_cresta'] = z['zona_cresta']
                     result['hidro2'] = z['hidro2']
-                if not result['zona_sismica']:
-                    result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
+                completar_zonas_faltantes(result, kml_zones)
                 issues = validate_fields(row_data, result)
                 result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (Google Maps)'
                 return result
@@ -414,10 +427,11 @@ def enrich_zones(lat: float, lng: float, cp: str, cp_lookup: dict, kml_zones: di
         'zona_sismica': entry.get('zona_sismica', ''),
         'zona_cresta': entry.get('zona_cresta', ''),
         'hidro2': entry.get('hidro2', ''),
+        'lat_geo': str(lat) if lat else '',
+        'lng_geo': str(lng) if lng else '',
     }
-    if not result['zona_sismica']:
-        result.update(get_zones_from_kml(lng, lat, kml_zones))
-    return result
+    completar_zonas_faltantes(result, kml_zones)
+    return {k: result[k] for k in ('zona_sismica', 'zona_cresta', 'hidro2')}
 
 
 # ── Exportacion a KML para Google My Maps ─────────────────────────────────────
@@ -547,11 +561,7 @@ def geocode_single(texto: str, cp_lookup: dict, kml_zones: dict,
     # 1) Si hay CP y esta en catalogo -> respuesta directa (gratis, instantanea)
     if cp_directo and cp_directo in cp_lookup:
         result = {**base, **enrich_from_cp(cp_directo), 'metodo': 'CP en catálogo'}
-        if not result['zona_sismica'] and result['lat_geo']:
-            try:
-                result.update(zonas_por_coords(float(result['lat_geo']), float(result['lng_geo'])))
-            except Exception:
-                pass
+        completar_zonas_faltantes(result, kml_zones)
         result['observacion'] = 'OK'
         return result
 
@@ -578,8 +588,7 @@ def geocode_single(texto: str, cp_lookup: dict, kml_zones: dict,
             result['zona_sismica'] = z['zona_sismica']
             result['zona_cresta'] = z['zona_cresta']
             result['hidro2'] = z['hidro2']
-        if not result['zona_sismica']:
-            result.update(zonas_por_coords(geo['lat'], geo['lng']))
+        completar_zonas_faltantes(result, kml_zones)
         result['observacion'] = 'OK'
         return result
 
