@@ -130,6 +130,53 @@ def nominatim_reverse(lat: float, lng: float, delay: float = 1.1) -> dict | None
     return None
 
 
+# ── Google Maps Geocoding ─────────────────────────────────────────────────────
+
+def _google_component(components: list, type_name: str, short: bool = False) -> str:
+    """Extrae un componente de address_components por su tipo."""
+    key = 'short_name' if short else 'long_name'
+    for c in components:
+        if type_name in c.get('types', []):
+            return c.get(key, '')
+    return ''
+
+
+def parse_google(result: dict) -> dict:
+    """Convierte un resultado de Google Geocoding al formato estandar."""
+    comps = result.get('address_components', [])
+    loc = result.get('geometry', {}).get('location', {})
+    municipio = (_google_component(comps, 'locality')
+                 or _google_component(comps, 'administrative_area_level_2')
+                 or _google_component(comps, 'sublocality'))
+    return {
+        'lat': float(loc.get('lat')),
+        'lng': float(loc.get('lng')),
+        'estado_geo': _google_component(comps, 'administrative_area_level_1'),
+        'municipio_geo': municipio,
+        'cp_geo': _google_component(comps, 'postal_code'),
+    }
+
+
+def google_search(query: str, api_key: str) -> dict | None:
+    """Forward geocode usando Google Maps Geocoding API.
+    Devuelve None si no hay key, si falla, o si no hay resultados."""
+    if not api_key:
+        return None
+    try:
+        r = requests.get(
+            'https://maps.googleapis.com/maps/api/geocode/json',
+            params={'address': query, 'key': api_key,
+                    'region': 'mx', 'language': 'es'},
+            timeout=10
+        )
+        data = r.json()
+        if data.get('status') == 'OK' and data.get('results'):
+            return parse_google(data['results'][0])
+    except Exception:
+        pass
+    return None
+
+
 def validate_fields(row_data: dict, geo: dict) -> list:
     """Cross-validate estado/municipio/cp between row and geocoded data."""
     issues = []
@@ -152,7 +199,8 @@ def validate_fields(row_data: dict, geo: dict) -> list:
 
 # ── Main geocoding function ───────────────────────────────────────────────────
 
-def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: float = 1.1) -> dict:
+def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict,
+                delay: float = 1.1, api_key: str = '') -> dict:
     """
     Geocode a single row using the fallback strategy:
     1. Existing coords -> reverse geocode + validate
@@ -160,7 +208,8 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
     3. Solo CP -> Nominatim
     4. Nombre + Ciudad + Estado -> Nominatim
     5. Ciudad + Estado -> Nominatim
-    6. Coords -> KML point-in-polygon (fallback de zonas)
+    6. Google Maps -> nombre/direccion completa (si hay api_key)
+    7. Coords -> KML point-in-polygon (fallback de zonas)
     """
 
     def gv(fid):
@@ -329,7 +378,32 @@ def geocode_row(row, mapping: dict, cp_lookup: dict, kml_zones: dict, delay: flo
             result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (ciudad + estado)'
             return result
 
-    # ── Step 6: Sin datos suficientes ─────────────────────────────────────────
+    # ── Step 6: Google Maps (si hay API key) ─────────────────────────────────
+    # Ultimo recurso para lo que Nominatim no encuentra (puentes, naves, comercios).
+    if api_key:
+        partes6 = [p for p in [nom_s, dir_s, mun_s, est_s] if p]
+        if partes6:
+            query = ', '.join(partes6 + ['Mexico'])
+            geo = google_search(query, api_key)
+            if geo:
+                result = {**base,
+                          'lat_geo': str(geo['lat']), 'lng_geo': str(geo['lng']),
+                          'estado_geo': geo['estado_geo'],
+                          'municipio_geo': geo['municipio_geo'],
+                          'cp_geo': geo['cp_geo'],
+                          'metodo': '6-Google Maps'}
+                if geo['cp_geo']:
+                    z = enrich_from_cp(geo['cp_geo'])
+                    result['zona_sismica'] = z['zona_sismica']
+                    result['zona_cresta'] = z['zona_cresta']
+                    result['hidro2'] = z['hidro2']
+                if not result['zona_sismica']:
+                    result.update(enrich_zones_from_coords(geo['lat'], geo['lng']))
+                issues = validate_fields(row_data, result)
+                result['observacion'] = 'CONFLICTO: ' + ' | '.join(issues) if issues else 'OK (Google Maps)'
+                return result
+
+    # ── Step 7: Sin datos suficientes ─────────────────────────────────────────
     return {**base, 'metodo': '-', 'observacion': 'Sin datos suficientes para geocodificar'}
 
 

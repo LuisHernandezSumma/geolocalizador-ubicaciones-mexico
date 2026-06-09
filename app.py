@@ -110,6 +110,17 @@ with st.sidebar:
         st.markdown(f'<img src="data:image/png;base64,{logo}" style="width:160px;margin-bottom:12px"/>', unsafe_allow_html=True)
     st.markdown("### Configuración")
     st.markdown(f"**{len(cp_lookup):,}** CPs en base de referencia")
+
+    # API key de Google leida de forma segura desde Secrets (nunca del codigo)
+    try:
+        GOOGLE_API_KEY = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
+    except Exception:
+        GOOGLE_API_KEY = ""
+    if GOOGLE_API_KEY:
+        st.success("Google Maps: activo", icon="✅")
+    else:
+        st.info("Google Maps: no configurado (solo Nominatim)", icon="ℹ️")
+
     st.markdown("---")
     st.markdown("**Estrategia de búsqueda:**")
     st.markdown("1. Coordenadas existentes → inverso")
@@ -117,7 +128,7 @@ with st.sidebar:
     st.markdown("3. Solo CP")
     st.markdown("4. Nombre + Ciudad + Estado")
     st.markdown("5. Ciudad + Estado")
-    st.markdown("6. Punto en polígono KML")
+    st.markdown("6. Google Maps" + (" (activo)" if GOOGLE_API_KEY else " (inactivo)"))
     st.markdown("---")
     delay = st.slider("Delay entre requests (seg)", 1.0, 3.0, 1.1, 0.1,
                       help="Para respetar el rate limit de Nominatim")
@@ -230,7 +241,7 @@ if uploaded:
         ok = warn = fail = 0
         for i, row in df.iterrows():
             prog.progress((i + 1) / len(df), text=f"Fila {i+1} de {len(df)}")
-            result = geocode_row(row, mapping, cp_lookup, kml_zones, delay)
+            result = geocode_row(row, mapping, cp_lookup, kml_zones, delay, GOOGLE_API_KEY)
             results.append(result)
             status = result.get('observacion', '')
             if 'CONFLICTO' in status: warn += 1
