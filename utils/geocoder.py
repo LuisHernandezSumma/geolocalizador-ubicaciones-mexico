@@ -504,3 +504,83 @@ def build_kml(df_result, nom_col=None, dir_col=None) -> bytes:
 </Document>
 </kml>"""
     return kml.encode('utf-8')
+
+
+# ── Consulta de un solo punto (CP o direccion) ────────────────────────────────
+
+def geocode_single(texto: str, cp_lookup: dict, kml_zones: dict,
+                   delay: float = 1.1, api_key: str = '') -> dict:
+    """Geocodifica UN punto a partir de texto libre (CP o direccion).
+    Devuelve coordenadas, estado/municipio, CP y las tres zonas.
+    No requiere Excel ni mapeo. Usa la misma estrategia de fallback."""
+    base = {'lat_geo': '', 'lng_geo': '', 'estado_geo': '', 'municipio_geo': '',
+            'cp_geo': '', 'zona_sismica': '', 'zona_cresta': '', 'hidro2': '',
+            'metodo': '', 'observacion': ''}
+    texto = str(texto or '').strip()
+    if not texto:
+        return {**base, 'observacion': 'Escribe un CP o una dirección'}
+
+    def enrich_from_cp(cp_key):
+        entry = cp_lookup.get(clean_cp(cp_key), {})
+        return {
+            'lat_geo': str(entry.get('lat', '')) if entry.get('lat') else '',
+            'lng_geo': str(entry.get('lng', '')) if entry.get('lng') else '',
+            'estado_geo': entry.get('estado', ''),
+            'municipio_geo': entry.get('municipio', ''),
+            'cp_geo': clean_cp(cp_key),
+            'zona_sismica': entry.get('zona_sismica', ''),
+            'zona_cresta': entry.get('zona_cresta', ''),
+            'hidro2': entry.get('hidro2', ''),
+        }
+
+    def zonas_por_coords(lat, lng):
+        return get_zones_from_kml(lng, lat, kml_zones)
+
+    # Detectar si el texto es un CP puro (5 digitos) o trae un CP embebido
+    solo_digitos = texto.replace(' ', '')
+    cp_directo = ''
+    if solo_digitos.isdigit() and len(solo_digitos) <= 5:
+        cp_directo = clean_cp(solo_digitos)
+    else:
+        cp_directo = extract_cp_from_text(texto)
+
+    # 1) Si hay CP y esta en catalogo -> respuesta directa (gratis, instantanea)
+    if cp_directo and cp_directo in cp_lookup:
+        result = {**base, **enrich_from_cp(cp_directo), 'metodo': 'CP en catálogo'}
+        if not result['zona_sismica'] and result['lat_geo']:
+            try:
+                result.update(zonas_por_coords(float(result['lat_geo']), float(result['lng_geo'])))
+            except Exception:
+                pass
+        result['observacion'] = 'OK'
+        return result
+
+    # 2) Buscar por texto en Nominatim (direccion/lugar)
+    geo = nominatim_search(f"{texto}, Mexico", delay)
+    # 3) Si Nominatim falla y hay Google, intentar Google
+    if not geo and api_key:
+        geo = google_search(f"{texto}, Mexico", api_key)
+        fuente = 'Google Maps'
+    else:
+        fuente = 'Nominatim'
+
+    if geo:
+        result = {**base,
+                  'lat_geo': str(geo['lat']), 'lng_geo': str(geo['lng']),
+                  'estado_geo': geo['estado_geo'],
+                  'municipio_geo': geo['municipio_geo'],
+                  'cp_geo': geo['cp_geo'] or cp_directo,
+                  'metodo': fuente}
+        # Zonas: primero por CP encontrado, si no por poligono
+        cp_final = geo['cp_geo'] or cp_directo
+        if cp_final and clean_cp(cp_final) in cp_lookup:
+            z = enrich_from_cp(cp_final)
+            result['zona_sismica'] = z['zona_sismica']
+            result['zona_cresta'] = z['zona_cresta']
+            result['hidro2'] = z['hidro2']
+        if not result['zona_sismica']:
+            result.update(zonas_por_coords(geo['lat'], geo['lng']))
+        result['observacion'] = 'OK'
+        return result
+
+    return {**base, 'metodo': '-', 'observacion': 'No se encontró el punto'}
