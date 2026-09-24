@@ -3,7 +3,7 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 import plotly.express as px
-import json, gzip, pickle, time, io, base64, html
+import json, gzip, pickle, time, io, base64, html, math
 from pathlib import Path
 from utils.geocoder import geocode_row, enrich_zones, build_kml, geocode_single
 from utils.data_loader import load_cp_lookup, load_kml_zones, load_zonas_display
@@ -21,6 +21,60 @@ SUMMA_GRIS_COMBO = "#D4D9DC"  # gris suave para combos/titulos
 # Secuencia de colores para graficas multi-categoria
 SUMMA_PALETA = ["#003EA5", "#688BC6", "#ADBCDD", "#C9E7DD", "#9BC4B5",
                 "#F2DBED", "#D4A5C9", "#86A1CE", "#5B7BB4", "#B8C8E0"]
+
+# ── Utilidades para exportar vistas como imagen PNG (generadas en el servidor) ──
+def _fig_to_png(fig, width=1000, height=600, scale=2):
+    """Renderiza una figura Plotly a bytes PNG. Requiere el paquete 'kaleido'."""
+    return fig.to_image(format="png", width=width, height=height, scale=scale)
+
+def _folium_screenshot(m, width=1150, height=820, wait_seconds=3, hide_controls=False, scale=2):
+    """Toma una captura real de un mapa Folium usando Chrome headless (Selenium).
+    Reproduce exactamente lo que se ve en pantalla: mosaico, iconos, capas, colores.
+    Requiere el paquete 'selenium' y tener Google Chrome instalado en el sistema."""
+    import tempfile, os
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+
+    if hide_controls:
+        css = """<style>
+        .leaflet-control-zoom, .leaflet-control-layers { display:none !important; }
+        </style>"""
+        m.get_root().header.add_child(folium.Element(css))
+
+    tmp_dir = tempfile.mkdtemp()
+    tmp_path = os.path.join(tmp_dir, "mapa_export.html")
+    m.save(tmp_path)
+
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument(f"--window-size={width},{height}")
+    options.add_argument(f"--force-device-scale-factor={scale}")
+    options.add_argument("--hide-scrollbars")
+    options.add_argument("--disable-gpu")
+
+    driver = webdriver.Chrome(options=options)
+    try:
+        driver.get(Path(tmp_path).as_uri())
+        time.sleep(wait_seconds)  # esperar a que carguen los tiles del mapa (red)
+        png_bytes = driver.get_screenshot_as_png()
+    finally:
+        driver.quit()
+    return png_bytes
+
+def _stack_pngs_vertical(pngs, bg="white", gap=14, pad=20):
+    """Apila verticalmente varias imágenes PNG (bytes) en una sola. Requiere 'pillow'."""
+    from PIL import Image
+    imgs = [Image.open(io.BytesIO(p)).convert("RGB") for p in pngs]
+    w = max(im.width for im in imgs) + pad * 2
+    h = sum(im.height for im in imgs) + gap * (len(imgs) - 1) + pad * 2
+    canvas = Image.new("RGB", (w, h), bg)
+    y = pad
+    for im in imgs:
+        canvas.paste(im, ((w - im.width) // 2, y))
+        y += im.height + gap
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
 
 st.set_page_config(page_title="Geolocalizador SUMMA", page_icon=":world_map:", layout="wide")
 
@@ -349,7 +403,7 @@ with tab_excel:
         moneda_default = st.session_state.get('moneda_default', 'MXN')
 
         def to_num(v):
-            """Convierte texto/numero a float; '' si no es numero."""
+            """Convierte texto/numero a float; None si no es numero."""
             if v is None:
                 return None
             s_ = str(v).strip().replace('$', '').replace(',', '').replace(' ', '')
@@ -364,7 +418,10 @@ with tab_excel:
             c = mapping.get(fid)
             return row[c] if c and c in row and pd.notna(row[c]) else None
 
-        # Construir columnas de valores
+        # Construir columnas de valores.
+        # IMPORTANTE: se usa None (no '') para los faltantes, así la columna
+        # queda con tipo numerico uniforme y no truena la conversion a Arrow
+        # que hace Streamlit al mostrar el DataFrame.
         v_inm, v_con, v_tot, v_neg, v_mon = [], [], [], [], []
         for _, row in df_orig.iterrows():
             inm = to_num(col_val(row, 'vinm'))
@@ -374,16 +431,16 @@ with tab_excel:
             if tot is None:
                 partes = [x for x in (inm, con) if x is not None]
                 tot = sum(partes) if partes else None
-            v_inm.append(inm if inm is not None else '')
-            v_con.append(con if con is not None else '')
-            v_tot.append(tot if tot is not None else '')
+            v_inm.append(inm)
+            v_con.append(con)
+            v_tot.append(tot)
             neg = col_val(row, 'neg')
             v_neg.append(str(neg).strip() if neg is not None else negocio_default)
             mon = col_val(row, 'mon')
             v_mon.append(str(mon).strip() if mon is not None else moneda_default)
-        df_result['valor_inmueble'] = v_inm
-        df_result['valor_contenidos'] = v_con
-        df_result['valor_total'] = v_tot
+        df_result['valor_inmueble'] = pd.to_numeric(pd.Series(v_inm), errors='coerce')
+        df_result['valor_contenidos'] = pd.to_numeric(pd.Series(v_con), errors='coerce')
+        df_result['valor_total'] = pd.to_numeric(pd.Series(v_tot), errors='coerce')
         df_result['negocio'] = v_neg
         df_result['moneda'] = v_mon
 
@@ -398,9 +455,29 @@ with tab_excel:
 
         df_result['_blob'] = df_result.apply(row_search_blob, axis=1)
 
-        tab1, tab2, tab3, tab4 = st.tabs(["Mapa", "Tabla de resultados", "Dashboard zonas", "Dashboard valores"])
+        SUBTABS = ["🗺️ Mapa", "📋 Tabla de resultados", "📊 Dashboard zonas", "💰 Dashboard valores"]
+        if 'nav_subtab' not in st.session_state:
+            st.session_state['nav_subtab'] = SUBTABS[0]
+        # st.tabs() no conserva la pestaña activa cuando un boton dentro de ella
+        # provoca un rerun (bug conocido de Streamlit): siempre regresa a la
+        # primera. Un st.radio con key en session_state SI mantiene su valor
+        # entre reruns, asi que lo usamos como reemplazo visual de las pestanas.
+        st.markdown("""
+        <style>
+        div[role="radiogroup"] { gap: 4px; border-bottom: 2px solid #E5E7EB; padding-bottom: 0; }
+        div[role="radiogroup"] label {
+            background: transparent; padding: 8px 16px 10px 16px; border-radius: 0;
+            border-bottom: 3px solid transparent; margin-bottom: -2px;
+        }
+        div[role="radiogroup"] label:has(input:checked) {
+            border-bottom: 3px solid #003EA5; font-weight: 600;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        nav_subtab = st.radio("Vista", SUBTABS, horizontal=True, key='nav_subtab',
+                              label_visibility='collapsed')
 
-        with tab1:
+        if nav_subtab == "🗺️ Mapa":
             st.markdown("### Puntos geocodificados")
             search = st.text_input("Buscar por estado, CP, nombre/sucursal o dirección",
                                    placeholder="Escribe para filtrar...")
@@ -494,11 +571,47 @@ with tab_excel:
 
                 folium.LayerControl(collapsed=False).add_to(m)
                 st_folium(m, width=None, height=550, returned_objects=[])
+
+                # ── Descargar imagen del mapa (puntos sobre México, generada en servidor) ──
+                def _estatus_pin(o):
+                    o = str(o)
+                    if o.startswith('OK'): return 'OK'
+                    if 'CONFLICTO' in o: return 'Conflicto'
+                    return 'Sin datos'
+                dfm_img = df_map[['lat_f', 'lng_f']].copy()
+                dfm_img['Estatus'] = df_map['observacion'].apply(_estatus_pin).values
+                dfm_img['Ubicación'] = [
+                    str(r[nom_col]) if nom_col and nom_col in r else f"Fila {r.name + 1}"
+                    for _, r in df_map.iterrows()]
+                cshot1, cshot2 = st.columns([3, 1])
+                ocultar_controles = cshot2.checkbox("Ocultar controles", value=False,
+                    help="Quita el panel de zoom y capas de la imagen exportada")
+                if cshot1.button("📸 Generar imagen del mapa", use_container_width=True,
+                             help="Toma una captura real del mapa tal como se ve en pantalla"):
+                    with st.spinner("Generando imagen (puede tardar unos segundos)..."):
+                        try:
+                            st.session_state['png_mapa'] = _folium_screenshot(
+                                m, width=1150, height=820, hide_controls=ocultar_controles)
+                        except Exception as e:
+                            st.session_state['png_mapa'] = None
+                            st.error(f"No se pudo generar la imagen: {e}")
+                            st.exception(e)
+                if st.session_state.get('png_mapa'):
+                    st.download_button("⬇️ Descargar PNG del mapa", st.session_state['png_mapa'],
+                        file_name="mapa_ubicaciones.png", mime="image/png",
+                        use_container_width=True, type="primary")
+                    st.caption("La imagen usa los filtros activos al momento de generarla.")
             else:
                 st.warning("No hay puntos con coordenadas para mostrar con los filtros actuales.")
 
-        with tab2:
+        if nav_subtab == "📋 Tabla de resultados":
             df_show = df_result.drop(columns=['_blob'])
+            # Normaliza columnas tipo 'object' con valores mezclados (str/float/int),
+            # como una columna de folio con valores '13' y '13-A', para que Arrow
+            # (usado por Streamlit al renderizar la tabla) no truene.
+            for c in df_show.columns:
+                if df_show[c].dtype == 'object':
+                    df_show[c] = df_show[c].astype(str).replace('nan', '')
             st.dataframe(df_show, use_container_width=True, height=400)
             cdl1, cdl2 = st.columns(2)
             buf = io.BytesIO()
@@ -540,7 +653,7 @@ with tab_excel:
                 file_name="datos_powerbi.csv", mime="text/csv", use_container_width=True)
             st.caption("Sube este CSV a la carpeta que lee Power BI. Codificación UTF-8 con BOM para acentos.")
 
-        with tab3:
+        if nav_subtab == "📊 Dashboard zonas":
             st.markdown("### Resumen por zonas y estados")
             total = len(df_result)
             con_coords = (df_result['lat_geo'] != '').sum()
@@ -557,30 +670,66 @@ with tab_excel:
                 d = df_result[df_result[col].astype(str).str.strip() != '']
                 if len(d) == 0:
                     st.info(f"Sin datos para {titulo}")
-                    return
+                    return None
                 vc = d[col].value_counts().reset_index()
                 vc.columns = [titulo, 'Ubicaciones']
                 fig = px.bar(vc, x=titulo, y='Ubicaciones', text='Ubicaciones',
                              color=titulo, color_discrete_sequence=SUMMA_PALETA)
                 fig.update_traces(textposition='outside')
-                fig.update_layout(height=320, margin=dict(t=30, b=10, l=10, r=10),
+                # automargin deja que Plotly calcule el espacio real que necesitan
+                # las etiquetas (nombres de estado, numeros grandes) en vez de un
+                # margen fijo de 10px que las recortaba al exportar a PNG.
+                fig.update_xaxes(automargin=True, tickangle=-40 if len(vc) > 8 else 0)
+                fig.update_yaxes(automargin=True)
+                fig.update_layout(height=340, margin=dict(t=50, b=70, l=60, r=20),
                                   plot_bgcolor='white', showlegend=False,
                                   font=dict(color="#333"))
+                fig.update_layout(title=dict(text=titulo, x=0.5, font=dict(color=SUMMA_AZUL, size=15)))
                 st.plotly_chart(fig, use_container_width=True)
+                return fig
 
+            def _export_dims(fig, base_w=900, base_h=420):
+                """Calcula un tamano de exportacion PNG proporcional al numero de
+                categorias, para que ninguna etiqueta quede apretada o cortada."""
+                n = max(len(fig.data), 3)
+                orientation = getattr(fig.data[0], 'orientation', None) if fig.data else None
+                if orientation == 'h':
+                    return base_w, max(base_h, 26 * n + 140)
+                return max(base_w, 70 * n + 220), base_h
+
+            figs_z = []
             g1, g2 = st.columns(2)
             with g1:
-                st.markdown("**Por Zona Sísmica**"); bar('zona_sismica', 'Zona Sísmica')
+                st.markdown("**Por Zona Sísmica**"); figs_z.append(bar('zona_sismica', 'Zona Sísmica'))
             with g2:
-                st.markdown("**Por Zona Cresta**"); bar('zona_cresta', 'Zona Cresta')
+                st.markdown("**Por Zona Cresta**"); figs_z.append(bar('zona_cresta', 'Zona Cresta'))
             g3, g4 = st.columns(2)
             with g3:
-                st.markdown("**Por Zona Huracán**"); bar('hidro2', 'Zona Huracán')
+                st.markdown("**Por Zona Huracán**"); figs_z.append(bar('hidro2', 'Zona Huracán'))
             with g4:
-                st.markdown("**Por Estado**"); bar('estado_geo', 'Estado')
+                st.markdown("**Por Estado**"); figs_z.append(bar('estado_geo', 'Estado'))
+
+            st.markdown("---")
+            figs_z = [f for f in figs_z if f is not None]
+            if st.button("📸 Generar imagen del dashboard de zonas", use_container_width=True) and figs_z:
+                with st.spinner("Generando imagen..."):
+                    try:
+                        pngs = []
+                        for f in figs_z:
+                            w, h = _export_dims(f, base_w=900, base_h=420)
+                            pngs.append(_fig_to_png(f, w, h))
+                        st.session_state['png_zonas'] = _stack_pngs_vertical(pngs)
+                    except Exception as e:
+                        st.session_state['png_zonas'] = None
+                        st.error(f"No se pudo generar la imagen: {e}")
+                        st.exception(e)
+            if st.session_state.get('png_zonas'):
+                st.download_button("⬇️ Descargar PNG (dashboard zonas)", st.session_state['png_zonas'],
+                    file_name="dashboard_zonas.png", mime="image/png",
+                    use_container_width=True, type="primary")
 
         # ════════════════════════════ TAB 4: DASHBOARD VALORES ═══════════════════
-        with tab4:
+        if nav_subtab == "💰 Dashboard valores":
             st.markdown("### Valor Total asegurado por zonas y estados")
 
             dv = df_result.copy()
@@ -605,23 +754,55 @@ with tab_excel:
                     g = d.groupby(col)['vt'].sum().reset_index().sort_values('vt', ascending=False)
                     g.columns = [titulo, 'Valor']
                     if horizontal:
+                        # Altura proporcional al numero de categorias (p.ej. 32 estados)
+                        # para que cada nombre tenga espacio y no se encimen ni se corten.
+                        alto = max(340, 26 * len(g) + 100)
                         fig = px.bar(g, y=titulo, x='Valor', orientation='h',
                                      color=titulo, color_discrete_sequence=SUMMA_PALETA)
-                        fig.update_layout(yaxis={'categoryorder': 'total ascending'})
+                        fig.update_layout(yaxis={'categoryorder': 'total ascending'}, height=alto)
+                        fig.update_layout(margin=dict(t=50, b=50, l=140, r=30))
                     else:
                         fig = px.bar(g, x=titulo, y='Valor',
                                      color=titulo, color_discrete_sequence=SUMMA_PALETA)
-                    fig.update_layout(height=340, margin=dict(t=30, b=10, l=10, r=10),
-                                      plot_bgcolor='white', showlegend=False, font=dict(color="#333"))
+                        fig.update_layout(height=360, margin=dict(t=50, b=70, l=80, r=20))
+                        fig.update_xaxes(tickangle=-40 if len(g) > 8 else 0)
+                    # automargin: Plotly reserva el espacio real que necesitan los
+                    # numeros grandes (ej. "$400,000,000") o nombres largos de estado,
+                    # en vez de un margen fijo que los recortaba en la exportacion PNG.
+                    fig.update_xaxes(automargin=True)
+                    fig.update_yaxes(automargin=True)
+                    fig.update_layout(plot_bgcolor='white', showlegend=False, font=dict(color="#333"))
+                    fig.update_layout(title=dict(text=titulo, x=0.5, font=dict(color=SUMMA_AZUL, size=15)))
                     st.plotly_chart(fig, use_container_width=True)
+                    return fig
 
+                figs_v = []
                 st.markdown("**Valor Total por Estado**")
-                bar_valor('estado_geo', 'Estado', horizontal=True)
+                figs_v.append(bar_valor('estado_geo', 'Estado', horizontal=True))
 
                 v1, v2, v3 = st.columns(3)
                 with v1:
-                    st.markdown("**Por Zona Sísmica**"); bar_valor('zona_sismica', 'Zona Sísmica')
+                    st.markdown("**Por Zona Sísmica**"); figs_v.append(bar_valor('zona_sismica', 'Zona Sísmica'))
                 with v2:
-                    st.markdown("**Por Zona Cresta**"); bar_valor('zona_cresta', 'Zona Cresta')
+                    st.markdown("**Por Zona Cresta**"); figs_v.append(bar_valor('zona_cresta', 'Zona Cresta'))
                 with v3:
-                    st.markdown("**Por Zona Huracán**"); bar_valor('hidro2', 'Zona Huracán')
+                    st.markdown("**Por Zona Huracán**"); figs_v.append(bar_valor('hidro2', 'Zona Huracán'))
+
+                st.markdown("---")
+                figs_v = [f for f in figs_v if f is not None]
+                if st.button("📸 Generar imagen del dashboard de valores", use_container_width=True) and figs_v:
+                    with st.spinner("Generando imagen..."):
+                        try:
+                            pngs = []
+                            for f in figs_v:
+                                w, h = _export_dims(f, base_w=1000, base_h=420)
+                                pngs.append(_fig_to_png(f, w, h))
+                            st.session_state['png_valores'] = _stack_pngs_vertical(pngs)
+                        except Exception as e:
+                            st.session_state['png_valores'] = None
+                            st.error(f"No se pudo generar la imagen: {e}")
+                            st.exception(e)
+                if st.session_state.get('png_valores'):
+                    st.download_button("⬇️ Descargar PNG (dashboard valores)", st.session_state['png_valores'],
+                        file_name="dashboard_valores.png", mime="image/png",
+                        use_container_width=True, type="primary")
